@@ -15,6 +15,7 @@ import srt
 from tqdm import tqdm
 
 from .config import Config
+from .api_util import chat_options, safe_error
 
 BATCH_MAX_ITEMS = 20
 BATCH_MAX_CHARS = 800
@@ -57,6 +58,7 @@ def _chat(client, cfg: Config, user: str) -> str:
         messages=[{"role": "system", "content": cfg.prompt_system},
                   {"role": "user", "content": user}],
         temperature=0.3,
+        **chat_options(cfg),
     )
     return resp.choices[0].message.content or ""
 
@@ -76,7 +78,8 @@ def _translate_batch(client, cfg: Config, texts: list[str],
             print(f"[translate] batch({len(texts)}) numbering misaligned, "
                   f"retry {attempt}", file=sys.stderr)
         except Exception as e:  # network/API errors retry the same way
-            print(f"[translate] batch({len(texts)}) request failed: {e}, "
+            print(f"[translate] batch({len(texts)}) request failed: "
+                  f"{safe_error(e, cfg.api_key)}, "
                   f"retry {attempt}", file=sys.stderr)
         if attempt < MAX_RETRIES:
             time.sleep(2 * attempt)

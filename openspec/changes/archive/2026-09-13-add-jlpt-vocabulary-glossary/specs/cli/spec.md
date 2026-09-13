@@ -1,16 +1,6 @@
-# cli Specification
+# Spec: cli
 
-## Purpose
-提供 macOS 日语视频处理命令，支持完整字幕与词汇流水线、独立字幕烧录、批量执行、启动校验、进度与结果报告。
-
-## Requirements
-
-### Requirement: 平台约束
-工具仅支持 macOS（Apple Silicon），明确不支持 Windows / Linux。预检 SHALL 检查运行平台，非 macOS 时立即报错退出，不开始任何处理。
-
-#### Scenario: 非 macOS 平台
-- **WHEN** 在 Windows 或 Linux 上执行 `ja-video-subtitles run ...`
-- **THEN** 预检失败，提示仅支持 macOS，退出码非零
+## MODIFIED Requirements
 
 ### Requirement: 命令结构
 
@@ -41,24 +31,6 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 - **WHEN** 用户执行 `ja-video-subtitles run video.mp4 -o out` 且 vocabulary.enabled 为 true
 - **THEN** 翻译后提取词汇，输出目录包含词汇 Markdown、结构化 JSON 以及既有字幕和成片
 
-### Requirement: 模型下载子命令
-`ja-video-subtitles download` SHALL 将 ASR 模型下载到项目内缓存目录并显示下载进度，成功后写入就绪标记。`run` SHALL NOT 自动下载模型；预检发现模型未就绪时，报错提示用户先运行 `ja-video-subtitles download`，并以非零退出码退出。
-
-#### Scenario: 模型未下载
-- **WHEN** 首次使用，用户直接执行 `ja-video-subtitles run xxx.mp4 -o out` 而未执行过 `download`
-- **THEN** 预检失败，提示「请先运行 ja-video-subtitles download」，退出码非零，不开始任何处理
-
-#### Scenario: 下载成功
-- **WHEN** 用户执行 `ja-video-subtitles download`
-- **THEN** 模型下载到项目内缓存目录，终端显示进度，完成后写入就绪标记
-
-### Requirement: 进度显示
-每个处理阶段 SHALL 在终端打印实时进度条：转写按已处理音频时长、翻译按批次、烧录按已编码时长。批量处理时进度条按文件分别显示。
-
-#### Scenario: 转写进度
-- **WHEN** 正在转写 1 小时的视频
-- **THEN** 进度条随转写推进实时更新，百分比可估算剩余时间
-
 ### Requirement: 启动预检
 
 `run` SHALL 保留完整预检：Python 环境与必需包、带 subtitles 滤镜的 ffmpeg、config.toml 存在且 api_key 有效、DeepSeek API 连通、ASR 模型已就绪、磁盘空间充足（≥ 视频总大小 × 2）、输出目录已创建且可写。`burn` SHALL 仅检查 macOS 平台、烧录需要的 Python 环境与包、ffmpeg/libass 与 ffprobe、磁盘空间（≥ 去重后视频总大小 × 2）及输出目录可写性，SHALL NOT 检查或初始化翻译 API、ASR 模型、词汇分词器及其词典或 JLPT 数据。`run` 在 vocabulary.enabled 为 true 时 SHALL 额外验证形态分析依赖、本地形态词典及 JLPT 数据的 schema、版本和校验和；任一缺失或损坏 SHALL 在处理前失败并给出修复指引。功能禁用时 SHALL 跳过词汇相关检查。全部字幕映射与预检 SHALL 在任一视频烧录前完成。
@@ -87,39 +59,6 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 
 - **WHEN** `run` 的 vocabulary.enabled 为 false，或执行独立 `burn`
 - **THEN** 不加载词汇分词器及其词典、不要求 JLPT 数据就绪，继续各自其余预检
-
-### Requirement: 同名成片确认
-
-`run` 与 `burn` 在预检通过后、开始处理前 SHALL 统一检查每个视频的 `<stem>.sub.mp4`。已存在且未指定 `-y/--yes` 时逐个提示覆盖或跳过；`run --force` 同样自动覆盖。全部确认 SHALL 在处理开始前完成，烧录过程 SHALL NOT 中断等待输入；未确认的视频 SHALL 跳过。`burn` 不提供 `--force`。
-
-#### Scenario: 同名文件选择覆盖
-
-- **WHEN** 已有成片，用户输入 y 或指定 `-y`
-- **THEN** 正常处理并覆盖该成片
-
-#### Scenario: 同名文件选择跳过
-
-- **WHEN** 已有成片，用户输入 N
-- **THEN** 标记跳过，保留既有成片，继续其他视频并在汇总中体现
-
-#### Scenario: 非交互环境
-
-- **WHEN** 存在同名成片且 stdin EOF，又未指定自动覆盖
-- **THEN** 不抛异常，跳过该视频并打印提示
-
-#### Scenario: 烧录不中断
-
-- **WHEN** 任一视频进入烧录阶段
-- **THEN** 后续不再弹出本批次的覆盖提示
-
-### Requirement: 运行日志
-
-`run` 与 `burn` SHALL 将终端输出同时追加到输出目录的 `run.log`，包含视频处理、错误与最终汇总。
-
-#### Scenario: 日志落盘
-
-- **WHEN** `run` 或 `burn` 全部处理完成或其中一个视频失败
-- **THEN** `run.log` 包含各视频的烧录记录、错误及汇总
 
 ### Requirement: 运行报告
 
@@ -164,43 +103,7 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 - **WHEN** `xxx.bilingual.srt` 可以解析但与当前日文/中文字幕的合成结果不同
 - **THEN** 重新合成并烧录更新后的双语字幕，不仅因缓存可解析就跳过合成
 
-### Requirement: 独立烧录多输入展开
-
-`burn` SHALL 接受一个或多个文件或目录路径，按参数顺序展开。目录 SHALL 仅枚举当前层 mp4/mov 文件，按文件名排序，忽略子目录和其他格式。SHALL 按解析后路径去重并保留首次出现顺序。任一显式指定的目录在当前层没有 mp4/mov，或最终没有有效视频时，SHALL 以退出码 2 拒绝整批请求。不同源视频的主干名不区分大小写冲突时 SHALL 拒绝整批请求。
-
-#### Scenario: 多个文件与目录混合
-
-- **WHEN** 执行 `burn a.mp4 videos/ b.mov -o out`，目录内包含 `c.mp4`、`d.mov` 和子目录
-- **THEN** 按输入位置及目录排序串行处理四个视频，不递归进入子目录
-
-#### Scenario: 重复源路径
-
-- **WHEN** 同一视频通过直接路径、目录或符号链接重复出现
-- **THEN** 解析路径去重后仅烧录一次，位置采用首次出现的顺序
-
-#### Scenario: 无匹配视频
-
-- **WHEN** 任一显式输入目录没有当前层 mp4/mov，即使其他输入包含有效视频
-- **THEN** 退出码为 2，指出无匹配视频的目录，不烧录任一视频
-
-#### Scenario: 主干名冲突
-
-- **WHEN** 输入包含不同视频 `a/clip.mp4` 与 `b/CLIP.mov`
-- **THEN** 在处理前报告同名冲突，以退出码 2 结束，不烧录任一视频
-
-### Requirement: 独立烧录批次结果
-
-`burn` SHALL 串行处理所有已确认任务。单视频烧录失败 SHALL 记录原因并继续其余视频。所有视频成功或跳过时退出码 SHALL 为 0，至少一个烧录失败时 SHALL 为 1，输入、字幕、配置或预检错误时 SHALL 为 2 且无视频开始烧录。
-
-#### Scenario: 部分视频失败
-
-- **WHEN** 第一个视频烧录失败，后面还有待处理视频
-- **THEN** 继续烧录后续视频，汇总包含失败数，最终退出码为 1
-
-#### Scenario: 全部跳过
-
-- **WHEN** 用户跳过全部已有成片
-- **THEN** 不启动 ffmpeg，汇总记录全部跳过，退出码为 0
+## ADDED Requirements
 
 ### Requirement: 词汇阶段非阻塞
 

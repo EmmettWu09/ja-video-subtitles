@@ -2,7 +2,7 @@
 
 **任意日文视频 → 一条命令 → 日/中双语硬字幕成片。**
 
-流水线：`视频 → 日文转写(kotoba-whisper) → 日译中(DeepSeek) → 双语合成 → 烧录(ffmpeg)`
+流水线：`视频 → 日文转写(kotoba-whisper) → 日译中(DeepSeek) → 词汇表 → 双语合成 → 烧录(ffmpeg)`
 
 ## 工作流程
 
@@ -10,14 +10,15 @@
 |---|---|---|
 | 转写 | 本地 ASR（kotoba-whisper，CPU，不走网络）：日语音频 → 带时间轴日文字幕，含 VAD、幻觉过滤、按标点分段 | `xxx.ja.srt` |
 | 翻译 | 日译中，走 DeepSeek API，分批带上下文、编号校验，异常自动重试降级 | `xxx.zh.srt` |
+| 词汇表 | 本地分词、还原基本形及非官方 JLPT 判级；通过配置的 API 生成简体中文词义 | `xxx.vocab.md`、`xxx.vocab.json` |
 | 双语合成 | 日/中逐条对齐（上日下中），纯本地，瞬间完成 | `xxx.bilingual.srt` |
 | 烧录 | ffmpeg 把字幕逐帧画进画面，VideoToolbox 硬编出成片 | `xxx.sub.mp4` |
 
-转写和烧录吃本机算力，翻译走网络，合成是文件拼接。各阶段耗时见报告 `report-*.md`。
+转写、分词与 JLPT 查询、合成和烧录均在本地执行。翻译会把字幕文本发送到配置的 API；词汇释义会把去重后的词及日文例句发送到同一服务。这些阶段不会上传音视频。默认 API 模型为 `deepseek-flash`。各阶段耗时见报告 `report-*.md`。
 
-支持 mp4/mov，单文件或文件夹批量。产物全部写入 `-o` 目录，源目录零写入。
+支持 mp4/mov，单文件或文件夹批量；`burn` 还可一次传入多个文件和文件夹。产物全部写入 `-o` 目录，不修改源视频。
 
-> **输入必须是日语语音。** 转写固定 `language="ja"`（kotoba-whisper 是日文专用模型），不做语言检测：喂入非日文音频不会报错，只会静默产出垃圾字幕。
+> **`run` 的输入必须是日语语音。** 转写固定 `language="ja"`（kotoba-whisper 是日文专用模型），不做语言检测：喂入非日文音频不会报错，只会静默产出垃圾字幕。`burn` 直接使用已有 SRT，不转写音频。
 
 ## 平台
 
@@ -31,7 +32,8 @@
 | uv | Python 环境管理 | `brew install uv` |
 | Python 3.12 | 运行时 | `uv venv` 自动安装 |
 | ffmpeg-full | 字幕烧录（libass） | `brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full` |
-| DeepSeek API Key | 日译中 | <https://platform.deepseek.com>（1 小时视频 < 1 元） |
+| DeepSeek API Key | 日译中和词汇释义 | [DeepSeek 平台](https://platform.deepseek.com) |
+| SudachiPy / SudachiDict-core | 本地词汇形态分析 | 随 `requirements.txt` 安装；词典下载约 70 MB |
 
 字幕字体为 macOS 自带苹方，无需安装。
 
@@ -46,6 +48,8 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 
 模型存放在项目内 `.cache/hf/`（`HF_HOME` 已固定），下载成功写 `.model-ready` 标记。默认走 `hf-mirror.com` 镜像，可用 `HF_ENDPOINT=https://huggingface.co` 覆盖。
 
+如果只用 `burn`，安装 Python、`srt`、`tqdm` 和 ffmpeg 即可，配置文件、API key、ASR 模型及词汇词典均可跳过。项目中存在 `config.toml` 时只读取字幕样式和视频码率，否则使用默认值。`burn` 忽略词汇配置，不导入分词器或加载 JLPT 数据。
+
 ## 用法
 
 ```bash
@@ -55,15 +59,57 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 ./ja-video-subtitles run xxx.mp4 -o out --force                # 全部重跑
 ```
 
-产物（都在 `-o` 目录）：`xxx.ja.srt`（日文）、`xxx.zh.srt`（中文）、`xxx.bilingual.srt`（双语，上日下中）、`xxx.sub.mp4`（成片）、`report-<时间戳>.md`（运行报告）、`run.log`（日志）。
+### 只烧录已有字幕
+
+```bash
+./ja-video-subtitles burn xxx.mp4 -o out                         # 读取 out/xxx.bilingual.srt
+./ja-video-subtitles burn xxx.mp4 -s edited.srt -o out           # 指定单个 SRT
+./ja-video-subtitles burn first.mp4 second.mov -o out            # 多文件
+./ja-video-subtitles burn first.mp4 second.mov --subtitle-dir subtitles -o out -y
+./ja-video-subtitles burn /path/to/videos --subtitle-dir subtitles -o out
+```
+
+`burn` 仅把已有字幕烧进视频，输出 `<out>/<stem>.sub.mp4`、`run.log` 和 `report-*.md`，不生成或修改字幕。默认读取 `<out>/<stem>.bilingual.srt`；指定 `--subtitle-dir` 则读取该目录下的同名字幕。处理一个去重后的视频时，可用 `-s/--subtitles` 指定任意命名的 SRT；它与 `--subtitle-dir` 不能同时使用。
+
+可混合传入文件和文件夹。文件夹按文件名排序，仅扫描当前层 mp4/mov，重复的实际视频路径只处理一次。任一传入文件夹在当前层没有 mp4/mov 时，整批退出。不同视频主干名相同（不区分大小写），或任一成片路径会覆盖源视频时，整批拒绝。全部字幕须为可读、非空的 UTF-8 SRT；任一字幕缺失或损坏，整批在烧录前退出。
+
+已有成片在开始前统一确认，`-y/--yes` 自动覆盖，无标准输入时跳过；`burn` 不使用 `--force`。预检通过后，单个视频编码失败会继续其他视频。退出码：`0` 成功或跳过，`1` 存在烧录失败，`2` 参数、字幕、配置或预检错误。全程不检查或加载 API 与 ASR 模型。
+
+### 完整流水线的产物与行为
+
+`run` 产物（都在 `-o` 目录）：`xxx.ja.srt`（日文）、`xxx.ja.json`（转写置信度）、`xxx.zh.srt`（中文）、`xxx.vocab.md`（词汇表）、`xxx.vocab.json`（结构化词条及复用元数据）、`xxx.bilingual.srt`（双语，上日下中）、`xxx.sub.mp4`（成片）、`report-<时间戳>.md`（运行报告）、`run.log`（日志）。词汇功能禁用时不生成词汇产物。
 
 行为要点：
 
 - 相对路径以执行命令时的目录为准；config 与模型缓存始终从项目目录读取。
-- 断点续跑：已有合法产物自动跳过；损坏产物自动重跑。
+- 断点续跑：已有合法产物自动跳过；损坏产物自动重跑。`run` 仅复用与当前日文/中文字幕重新合成结果一致的双语字幕；修改任一源字幕后会先更新双语文件再烧录。手工编辑后的独立 SRT 可用 `burn` 原样烧录。
 - 同名成片在处理开始前统一询问；烧录过程不中断。非交互环境默认不覆盖。
-- 预检 8 项（平台、Python 依赖、ffmpeg+libass、config/api_key、DeepSeek 连通、模型就绪、磁盘空间、输出目录可写），任一失败立即退出并给出修复指引。
+- 预检平台、Python 依赖、ffmpeg+libass、config/api_key、DeepSeek 连通、模型就绪、磁盘空间和输出目录可写。词汇启用时额外检查分词器、本地形态词典及 JLPT 数据的 schema、版本与哈希；任一失败会在处理前退出并给出修复指引。
+- 词汇阶段整体失败仍继续合成与烧录，该视频记为 `partial`（部分成功），整批退出码为 `1`；其他处理失败为 `failed`，确认跳过为 `skipped`。单个词释义重试后失败时，保留词条、留空释义并附 warning，只计为释义降级。报告包含 succeeded/partial/failed/skipped 数量、词汇等级分布、释义降级数量、错误及已有产物，不含 API key。
 - 烧录中 Ctrl+C 会杀掉 ffmpeg 并清理半成品。
+
+### 词汇配置
+
+项目根目录 `config.toml` 中的可选配置，默认值如下：
+
+```toml
+[vocabulary]
+enabled = true
+learner_level = "N3"
+include_unknown = true
+max_examples = 3
+```
+
+`learner_level` 仅接受 N5/N4/N3/N2/N1，只收录严格更难的等级，因此 N3 用户得到 N2、N1。`include_unknown` 决定是否收录未分级实义词；专有名词会额外标记，未分级不代表一定较难。`enabled`、`include_unknown` 必须是布尔值，`max_examples` 必须是 1–10 的整数。词条包含基本形、读音、表层形式、出现次数、首次时间，以及最多指定条数的不同日文字幕语境和已有中文译句。没有符合条件的词时仍生成合法空词表。
+
+等级来自固定版本的本地非官方参考数据，不由 API 决定；[数据说明](ja_video_subtitles/data/README.md) 记录来源、许可证及限制。JSON 记录字幕哈希、配置、数据和形态分析版本；两种词汇文件均合法且元数据一致才可复用，日文/中文字幕、配置或数据变化会重新生成。`--force` 强制重跑全部阶段；已有成片时，继续处理还需 `-y` 或在提示中选择覆盖。
+
+设 `enabled = false` 可跳过词汇阶段及其依赖检查。若启用后预检发现依赖或数据损坏，可重装固定依赖并恢复同一版本词表：
+
+```bash
+uv pip install --python .venv/bin/python --reinstall-package SudachiPy --reinstall-package SudachiDict-core -r requirements.txt
+.venv/bin/python ja_video_subtitles/data/rebuild_jlpt.py
+```
 
 ## 测试
 
@@ -73,14 +119,23 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 
 离线单测，不依赖模型与 API。
 
+本机安装 ffmpeg 后，可额外运行真实烧录测试（自动生成短视频，无需模型或配置）：
+
+```bash
+RUN_FFMPEG_TESTS=1 .venv/bin/python -m unittest discover -s tests
+```
+
 ## 代码结构
 
 见英文版 [README.md](README.md) 的 Code layout 一节（模块职责一一对应）。
 
+独立烧录的 OpenSpec 变更见 [add-standalone-burn-command](openspec/changes/archive/2026-09-13-add-standalone-burn-command/proposal.md)。
+词汇表的 OpenSpec 变更见 [add-jlpt-vocabulary-glossary](openspec/changes/archive/2026-09-13-add-jlpt-vocabulary-glossary/proposal.md)。
+
 ## 预期耗时（1 小时视频，M 系芯片）
 
-转写约 10–20 分钟，翻译约 2–5 分钟，烧录约 5–15 分钟（VideoToolbox 硬编）。
+转写约 10–20 分钟，翻译约 2–5 分钟，烧录约 5–15 分钟（VideoToolbox 硬编）。词汇阶段取决于去重后的目标词数和 API 延迟，实际耗时见报告。
 
 ## License
 
-MIT，见 `LICENSE`。
+代码使用 MIT，见 `LICENSE`。内置 JLPT 数据另有归属及许可证，见[数据说明](ja_video_subtitles/data/README.md)。

@@ -21,6 +21,8 @@ video.mp4
 
 `vocabulary` 是学习辅助产物，不是烧录的前置条件。该阶段发生异常时，CLI 捕获并记录错误，继续执行 `merge` 和 `burn`。
 
+独立 `burn` 子命令保持只烧录已有 SRT 的行为，支持单文件、多文件与目录；其配置和预检不导入分词器、不加载 JLPT 数据，不要求词汇设置合法、ASR 模型就绪或翻译 API 可用。合并规范时先归档 `add-standalone-burn-command`，再应用本变更的完整 CLI/config requirement 块，保留既有独立烧录场景。
+
 ## 模块划分
 
 新增 `ja_video_subtitles/vocabulary.py`，职责包括：
@@ -38,14 +40,14 @@ video.mp4
 
 ### 形态分析
 
-建议使用 `SudachiPy` 与 `SudachiDict-core`，采用适合词典查询的拆分模式。每个 token 至少取得：
+使用固定版本 `SudachiPy==0.6.11` 与 `SudachiDict-core==20260723`，采用词典查询适用的 SplitMode.C。每个 token 至少取得：
 
 - `surface`：字幕中的实际形式；
 - `lemma`：词典基本形；
 - `reading`：片假名读音，输出时转换为平假名；
 - `part_of_speech`：词性。
 
-动词、形容词的活用形式合并到基本形。例如 `考えていた` 计入 `考える`。
+动词、形容词的活用形式合并到基本形。例如 `考えていた` 计入 `考える`。Sudachi 的表层读音可能仍为活用形式（如 `考え` 的 `カンガエ`），因此规范化读音需从还原的基本形取得，避免同一词以不同活用读音重复入表。
 
 ### 过滤规则
 
@@ -57,22 +59,24 @@ video.mp4
 
 专有名词不参与 JLPT 等级猜测：在 `include_unknown = true` 时进入 `未分级` 组，并额外标记 `is_proper_noun = true`。
 
-本次只提取单词，不识别多 token 语法结构。词表数据中明确登记的固定复合词，可以在规范化 token 序列上做最长匹配；实现前需用选定数据集验证可行性。
+本次只提取单词，不识别多 token 语法结构。SplitMode.C 保留词典中识别的复合词供直接查询；不在跨 token 序列上猜测固定语法结构。
 
 ## JLPT 判级
 
 ### 数据要求
 
-实现前必须选择一份允许再分发或允许安装时获取的 JLPT 词汇数据，并记录：
+采用 `stephenmk/yomitan-jlpt-vocab` 的固定提交 `b062d4e38c4bdd0950ae1d4ec55f04b176182e03`，转换版本为该提交号加 `-v1`，共 8,113 条记录。该上游项目声明 CC-BY-SA-4.0，等级来自 Jonathan Waller 的旧社区参考表，上游对照 JMdict 处理读音和常见写法。它不是 JLPT 官方词表，现代口语、专门术语和网络词汇覆盖有限，不能把未收录词当作高阶词。
+
+项目内 [数据说明](../../../../ja_video_subtitles/data/README.md)、`JLPT-LICENSE.txt` 与保留的 `JLPT-UPSTREAM-README.md` 记录：
 
 - 数据名称和上游地址；
 - 固定版本或内容哈希；
 - 许可证及项目内的归属说明；
 - 字段映射和已知限制。
 
-不得在来源和许可证未确认前直接把第三方词表提交进仓库。
+每个上游输入文件有 SHA-256 固定值，转换脚本仅映射字段并将读音规范化，不修改上游等级，也不丢弃歧义记录。运行时检验 JSON schema、固定版本、词条校验和及完整文件校验和。`python ja_video_subtitles/data/rebuild_jlpt.py` 可抓取同一提交并验证哈希后重建；上游文件已在本地时支持离线重建。数据的许可与项目代码的 MIT 许可分别保留。
 
-查询优先使用 `(lemma, reading)`，只在结果唯一时回退到 `lemma`。同形异音或同形多等级无法唯一确定时标记 `未分级`，不取更难等级来制造确定性。
+查询优先使用 `(lemma, reading)`。只有调用方没有读音，且基本形在数据集中只有一个读音及等级组合时，才允许回退到 `lemma`。调用方提供的非空读音未匹配时，即使同形词只有一个已知等级也标记 `未分级`，避免把未收录读法误标成另一个读法的等级；例如 `生物/せいぶつ` 为 N3，未匹配的 `生物/なまもの` 保持未分级。同一基本形和读音有多个等级时也标记未分级，不取更难等级来制造确定性。
 
 筛选规则由等级顺序 `N5 < N4 < N3 < N2 < N1` 驱动。例如：
 
@@ -82,7 +86,9 @@ video.mp4
 
 ## 中文词典释义
 
-判级在本地完成，DeepSeek 不负责决定 JLPT 等级。对筛选、去重后的词汇分批调用现有 OpenAI 兼容 client，输入稳定 ID、基本形、读音、词性和一个原句，要求返回 JSON：
+判级在本地完成，DeepSeek 不负责决定 JLPT 等级。对筛选、去重后的词汇分批调用现有 OpenAI 兼容 client（默认模型 `deepseek-flash`），输入稳定 ID、基本形、读音、词性和一个原句，要求返回 JSON。提取与判级不访问网络；只有翻译与词义生成把相应文本发送到用户配置的 API，不发送音视频。DeepSeek 官方端点的请求显式关闭 thinking，其他兼容端点保持其原有参数。
+
+预期响应：
 
 ```json
 {
@@ -122,13 +128,20 @@ video.mp4
   "schema_version": 1,
   "source": {
     "ja_srt": "xxx.ja.srt",
-    "ja_srt_sha256": "..."
+    "ja_srt_sha256": "...",
+    "zh_srt": "xxx.zh.srt",
+    "zh_srt_sha256": "..."
   },
   "settings": {
     "learner_level": "N3",
     "include_unknown": true,
     "max_examples": 3,
-    "jlpt_dataset": "name@version"
+    "jlpt_dataset": "name@version",
+    "extractor_version": 1,
+    "morphology_versions": {
+      "SudachiPy": "0.6.11",
+      "SudachiDict-core": "20260723"
+    }
   },
   "entries": []
 }
@@ -141,7 +154,7 @@ video.mp4
 Markdown 面向直接阅读，示例：
 
 ```markdown
-## N2
+## N1
 
 ### 見落とす（みおとす）
 
@@ -155,7 +168,7 @@ Markdown 面向直接阅读，示例：
 > 我不小心漏看了文件中的错误。
 ```
 
-文件顶部注明学习者等级、JLPT 数据来源版本、生成时间以及“非官方等级参考”提示。分组顺序固定为 N2、N1、未分级；组内按首次出现时间排序。没有目标词汇时仍生成合法文件，并明确写“未发现符合条件的词汇”。
+文件顶部注明学习者等级、JLPT 数据来源版本、生成时间以及“非官方等级参考”提示。默认 N3 配置下按 N2、N1、未分级分组；其他学习者等级依次显示严格更难的级别，再显示未分级，组内按首次出现时间排序。示例中的 `見落とす` 在选定数据中标为 N1。没有目标词汇时仍生成合法文件，并明确写“未发现符合条件的词汇”。
 
 ## 配置
 
@@ -170,7 +183,7 @@ max_examples = 3
 ```
 
 - `learner_level` 仅允许 `N5`、`N4`、`N3`、`N2`、`N1`；
-- `max_examples` 允许 1 到 10；
+- `enabled`、`include_unknown` 仅接受布尔值；`max_examples` 仅接受 1 到 10 的整数，不接受布尔值；
 - 配置非法时在预检阶段报错；
 - `enabled = false` 时不加载分词器、不运行词汇阶段、不要求词表数据就绪。
 
@@ -180,10 +193,12 @@ max_examples = 3
 
 - JSON 与 Markdown 都存在且可读；
 - JSON schema 合法；
-- `ja_srt_sha256` 与当前日文字幕一致；
-- learner level、include_unknown、max_examples 和 JLPT 数据版本一致。
+- `ja_srt_sha256`、`zh_srt_sha256` 与当前日文、中文字幕一致；
+- learner level、include_unknown、max_examples、JLPT 数据版本、提取器和形态分析版本一致。
 
 配置或源字幕变化时自动重建词表。`--force` 无条件重建。
+
+`run` 的双语字幕也校验内容新鲜度：只有缓存的 SRT 与当前日文、中文按 index 合成的时间轴和文本一致才跳过合成。修改日文或中文后重新运行时，词汇语境与烧录用双语字幕同时更新，避免词表和成片显示不同译文。独立 `burn` 保持直接读取用户选定 SRT 的行为，不合成、不修改字幕。
 
 先原子写入临时文件，再替换正式 JSON/Markdown，避免中断留下“看似存在但内容不完整”的产物。
 
@@ -193,7 +208,7 @@ max_examples = 3
 
 错误分三类：
 
-- 单词释义失败：保留词条并留空释义，阶段完成但带 warning；
+- 单词释义失败：保留词条并留空释义，阶段完成但带 warning，报告计入释义降级；其他阶段成功时视频仍为 succeeded；
 - 无目标词：正常完成，输出空词表；
 - 阶段级失败（分词器、数据文件、写文件异常）：视频标记为 `partial`，继续合成和烧录。
 

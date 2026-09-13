@@ -6,7 +6,8 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from .ffmpeg_util import escape_filter_path, find_ffprobe, probe_duration
+from .ffmpeg_util import (escape_filter_path, escape_filter_value, find_ffprobe,
+                          probe_duration)
 
 
 def burn(video: Path, bilingual_srt: Path, out_dir: Path, ffmpeg: Path,
@@ -15,8 +16,8 @@ def burn(video: Path, bilingual_srt: Path, out_dir: Path, ffmpeg: Path,
     duration = probe_duration(ffprobe, video) if ffprobe else None
 
     out_mp4 = out_dir / f"{video.stem}.sub.mp4"
-    vf = (f"subtitles='{escape_filter_path(bilingual_srt)}'"
-          f":force_style='{force_style}'")
+    vf = (f"subtitles={escape_filter_path(bilingual_srt)}"
+          f":force_style={escape_filter_value(force_style)}")
     cmd = [
         str(ffmpeg), "-y", "-i", str(video),
         "-vf", vf,

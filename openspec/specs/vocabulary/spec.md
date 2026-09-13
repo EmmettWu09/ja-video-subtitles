@@ -1,10 +1,13 @@
-# Spec: vocabulary
+# vocabulary Specification
 
-## ADDED Requirements
+## Purpose
+从日语字幕提取适合学习者等级的词汇，提供可追溯的非官方 JLPT 分级、中文释义、视频语境及可复用的词汇文件。
+
+## Requirements
 
 ### Requirement: 按学习者等级提取词汇
 
-系统 SHALL 对日文 SRT 做本地形态分析，将活用形式归一为基本形，并基于版本化 JLPT 词汇数据筛选严格高于 `learner_level` 的词汇。默认 `learner_level` 为 N3，因此 SHALL 收录 N2、N1，排除 N3、N4、N5。判级结果 SHALL 标注数据来源与版本，不得宣称为 JLPT 官方词表结论。
+系统 SHALL 对日文 SRT 做本地形态分析，将活用形式归一为基本形，并基于版本化 JLPT 词汇数据筛选严格高于 `learner_level` 的词汇。默认 `learner_level` 为 N3，因此 SHALL 收录 N2、N1，排除 N3、N4、N5。查询 SHALL 优先精确匹配基本形和读音，只有读音缺失且数据中该基本形对应唯一读音及等级时才允许基本形回退；非空读音未命中或存在等级歧义时 SHALL 标记未分级。判级结果 SHALL 标注数据来源与版本，不得宣称为 JLPT 官方词表结论。
 
 #### Scenario: N3 用户遇到不同等级词汇
 
@@ -20,6 +23,11 @@
 
 - **WHEN** 仅凭基本形和读音不能唯一确定 JLPT 等级
 - **THEN** 系统将该词标为未分级，不猜测为 N1 或 N2
+
+#### Scenario: 同形词的读音未收录
+
+- **WHEN** 数据含 `生物/せいぶつ` 的 N3 记录，但调用方给出的读音是未收录的 `なまもの`
+- **THEN** 标记为未分级，不复用另一读法的 N3 等级
 
 ### Requirement: 未分级实义词
 
@@ -50,7 +58,7 @@
 
 ### Requirement: 词汇产物
 
-系统 SHALL 在输出目录原子生成 `<stem>.vocab.json` 和 `<stem>.vocab.md`。JSON SHALL 包含 schema version、日文字幕 SHA-256、学习者配置、JLPT 数据版本和结构化词条；Markdown SHALL 标明数据来源及非官方等级提示，并按 N2、N1、未分级分组，组内按首次出现时间排序。
+系统 SHALL 在输出目录原子生成 `<stem>.vocab.json` 和 `<stem>.vocab.md`。JSON SHALL 包含 schema version、日文及中文字幕 SHA-256、学习者配置、JLPT 数据版本、形态分析版本和结构化词条；Markdown SHALL 标明数据来源及非官方等级提示。默认 N3 时 SHALL 按 N2、N1、未分级分组；其他 learner_level SHALL 按严格更难的等级由易至难分组，再列未分级，组内按首次出现时间排序。
 
 #### Scenario: 正常生成 N3 词表
 
@@ -69,7 +77,7 @@
 
 ### Requirement: 词汇断点续跑
 
-仅当 JSON/Markdown 均合法，且 JSON 中的源字幕哈希、学习者等级、include_unknown、max_examples 和 JLPT 数据版本均与当前运行一致时，系统 SHALL 跳过词汇阶段。任一项变化或指定 `--force` 时 SHALL 重新生成。
+仅当 JSON/Markdown 均合法，且 JSON 中的日文及中文字幕哈希、学习者等级、include_unknown、max_examples、JLPT 数据版本、提取器和形态分析版本均与当前运行一致时，系统 SHALL 跳过词汇阶段。任一项变化或指定 `--force` 时 SHALL 重新生成。
 
 #### Scenario: 修改学习者等级
 

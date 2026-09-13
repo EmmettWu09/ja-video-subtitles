@@ -1,15 +1,18 @@
-"""Startup preflight: all 8 checks must pass before any processing starts."""
+"""Startup checks for the full pipeline and standalone subtitle burning."""
 
 import importlib
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 from . import model as model_mod
-from .config import Config, api_key_valid, load
-from .ffmpeg_util import find_ffmpeg
+from .api_util import chat_options, safe_error
+from .config import BurnConfig, Config, api_key_valid, load, load_burn
+from .ffmpeg_util import find_ffmpeg, find_ffprobe
 
 REQUIRED_PACKAGES = ["faster_whisper", "openai", "srt", "tqdm", "huggingface_hub"]
+BURN_REQUIRED_PACKAGES = ["srt", "tqdm"]
 
 
 class PreflightError(Exception):
@@ -18,22 +21,7 @@ class PreflightError(Exception):
 
 def run(videos: list[Path], out_dir: Path) -> tuple[Config, Path]:
     """Return (config, ffmpeg path); raise PreflightError on any failure."""
-    errors: list[str] = []
-
-    # 0. macOS only (VideoToolbox encoder, PingFang SC font, brew ffmpeg paths)
-    if sys.platform != "darwin":
-        errors.append("macOS only: burning relies on VideoToolbox hardware "
-                      "encoding and the PingFang SC font")
-
-    # 1. Python version and required packages
-    if sys.version_info < (3, 12):
-        errors.append(f"Python >= 3.12 required (current "
-                      f"{sys.version.split()[0]})")
-    missing = [p for p in REQUIRED_PACKAGES if not _importable(p)]
-    if missing:
-        errors.append(f"missing packages: {', '.join(missing)}. Run: "
-                      "uv pip install --python .venv/bin/python "
-                      "-r requirements.txt")
+    errors = _check_runtime(REQUIRED_PACKAGES)
 
     # 2. ffmpeg with the subtitles filter (libass)
     ffmpeg = find_ffmpeg()
@@ -59,18 +47,81 @@ def run(videos: list[Path], out_dir: Path) -> tuple[Config, Path]:
                             timeout=15)
             client.chat.completions.create(
                 model=cfg.model, max_tokens=1,
-                messages=[{"role": "user", "content": "ping"}])
+                messages=[{"role": "user", "content": "ping"}],
+                **chat_options(cfg))
         except Exception as e:
-            errors.append(f"DeepSeek API connectivity check failed: {e}")
+            errors.append("DeepSeek API connectivity check failed: "
+                          f"{safe_error(e, cfg.api_key)}")
 
     # 5. ASR model ready (never auto-download here)
     if cfg is not None and not model_mod.model_ready(cfg.asr_model_id):
         errors.append("ASR model not downloaded. Run: ja-video-subtitles download")
 
-    # 6. Free disk space >= 2x total input size
-    #    (walk up to the first existing ancestor for the stat)
-    total_size = sum(v.stat().st_size for v in videos)
+    # Vocabulary is optional; keep its imports and dictionaries out of burn.
+    if cfg is not None and cfg.vocabulary_enabled:
+        try:
+            from . import vocabulary
+            vocabulary.check_ready()
+        except Exception as e:
+            errors.append(
+                f"Vocabulary prerequisites not ready: {safe_error(e, cfg.api_key)}. "
+                "Install/repair dependencies: uv pip install --python .venv/bin/python "
+                "--reinstall-package SudachiPy --reinstall-package SudachiDict-core "
+                "-r requirements.txt; restore the bundled JLPT data with "
+                ".venv/bin/python ja_video_subtitles/data/rebuild_jlpt.py, "
+                "or set vocabulary.enabled = false.")
+
+    errors.extend(_check_output(videos, out_dir))
+
+    if errors:
+        raise PreflightError("\n".join(f"  x {e}" for e in errors))
+    return cfg, ffmpeg
+
+
+def run_burn(videos: list[Path], out_dir: Path) -> tuple[BurnConfig, Path]:
+    """Check local burning prerequisites without ASR or translation services."""
+    errors = _check_runtime(BURN_REQUIRED_PACKAGES)
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        errors.append("no ffmpeg with the subtitles filter (libass) found. "
+                      "Install: brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full")
+    elif find_ffprobe(ffmpeg) is None:
+        errors.append("no ffprobe found for reading video duration. "
+                      "Install ffmpeg/ffprobe: "
+                      "brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full")
+    cfg: BurnConfig | None = None
     try:
+        cfg = load_burn()
+    except Exception as e:
+        errors.append(str(e))
+    errors.extend(_check_output(videos, out_dir))
+    if errors:
+        raise PreflightError("\n".join(f"  x {e}" for e in errors))
+    assert cfg is not None and ffmpeg is not None
+    return cfg, ffmpeg
+
+
+def _check_runtime(packages: list[str]) -> list[str]:
+    errors: list[str] = []
+    if sys.platform != "darwin":
+        errors.append("macOS only: burning relies on VideoToolbox hardware "
+                      "encoding and the PingFang SC font")
+    if sys.version_info < (3, 12):
+        errors.append(f"Python >= 3.12 required (current "
+                      f"{sys.version.split()[0]})")
+    missing = [p for p in packages if not _importable(p)]
+    if missing:
+        errors.append(f"missing packages: {', '.join(missing)}. Run: "
+                      "uv pip install --python .venv/bin/python "
+                      "-r requirements.txt")
+    return errors
+
+
+def _check_output(videos: list[Path], out_dir: Path) -> list[str]:
+    errors: list[str] = []
+    # Free disk space >= 2x total input size. Walk up to an existing ancestor.
+    try:
+        total_size = sum(v.stat().st_size for v in videos)
         probe_dir = out_dir
         while not probe_dir.exists():
             probe_dir = probe_dir.parent
@@ -82,18 +133,16 @@ def run(videos: list[Path], out_dir: Path) -> tuple[Config, Path]:
     except OSError as e:
         errors.append(f"cannot check disk space: {e}")
 
-    # 7. Output directory creatable and writable
+    # Probe an exclusively created temporary file, preserving existing files.
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
-        probe = out_dir / ".write_probe"
-        probe.touch()
-        probe.unlink()
+        with tempfile.TemporaryFile(prefix=".write_probe-", dir=out_dir) as probe:
+            probe.write(b"probe")
+            probe.flush()
     except OSError as e:
         errors.append(f"output directory {out_dir} is not writable: {e}")
 
-    if errors:
-        raise PreflightError("\n".join(f"  x {e}" for e in errors))
-    return cfg, ffmpeg
+    return errors
 
 
 def _importable(name: str) -> bool:

@@ -1,9 +1,11 @@
-"""CLI entry point: ja-video-subtitles download / ja-video-subtitles run <path> -o <dir>."""
+"""CLI entry point: download, full pipeline (run), or existing subtitles (burn)."""
 
 import argparse
 import sys
 import time
+import unicodedata
 from pathlib import Path
+from typing import Callable
 
 import srt
 
@@ -13,6 +15,7 @@ from . import merge as merge_mod
 from . import preflight, transcribe as transcribe_mod
 from . import translate as translate_mod
 from .config import load
+from .api_util import safe_error
 from .model import download
 from .report import Reporter, StageRecord, VideoRecord
 
@@ -38,13 +41,85 @@ class _Tee:
 def collect_videos(path: Path) -> list[Path]:
     if path.is_file():
         if path.suffix.lower() not in SUPPORTED_SUFFIXES:
-            raise SystemExit(f"only mp4/mov files are supported: {path}")
+            raise ValueError(f"only mp4/mov files are supported: {path}")
         return [path]
+    if not path.is_dir():
+        raise ValueError(f"input path is not a file or directory: {path}")
     videos = sorted(p for p in path.iterdir()
                     if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES)
     if not videos:
-        raise SystemExit(f"no mp4/mov files found in directory: {path}")
+        raise ValueError(f"no mp4/mov files found in directory: {path}")
     return videos
+
+
+def collect_burn_videos(inputs: list[str]) -> list[Path]:
+    """Expand inputs in order, deduplicate paths, and reject output collisions."""
+    videos, seen, stems = [], set(), {}
+    for raw in inputs:
+        for video in collect_videos(Path(raw)):
+            resolved = video.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            key = unicodedata.normalize("NFC", video.stem).casefold()
+            if key in stems:
+                raise ValueError(
+                    f"videos have the same output stem: {stems[key]} and "
+                    f"{video}; rename one or use separate output directories")
+            stems[key] = video
+            videos.append(video.absolute())
+    return videos
+
+
+def burn_subtitles(videos: list[Path], out_dir: Path,
+                   subtitles: str | None, subtitle_dir: str | None
+                   ) -> dict[Path, Path]:
+    """Resolve and fully validate every SRT before starting any encoder."""
+    if subtitles and subtitle_dir:
+        raise ValueError("--subtitles and --subtitle-dir are mutually exclusive")
+    if subtitles and len(videos) != 1:
+        raise ValueError("--subtitles requires exactly one video; "
+                         "use --subtitle-dir for multiple videos")
+    directory = Path(subtitle_dir) if subtitle_dir else out_dir
+    if subtitle_dir and not directory.is_dir():
+        raise ValueError(f"subtitle directory does not exist: {directory}")
+    result, errors = {}, []
+    for video in videos:
+        path = (Path(subtitles) if subtitles else
+                directory / f"{video.stem}.bilingual.srt").absolute()
+        try:
+            if path.suffix.lower() != ".srt":
+                raise ValueError("expected an .srt file")
+            subs = list(srt.parse(path.read_text(encoding="utf-8-sig")))
+            if not subs or any(not sub.content.strip() or sub.start < srt.timedelta(0)
+                               or sub.end <= sub.start for sub in subs):
+                raise ValueError("SRT must contain nonempty cues with valid timestamps")
+        except (OSError, UnicodeError, srt.SRTParseError, ValueError) as e:
+            errors.append(f"{video.name}: invalid subtitle {path}: {e}")
+        result[video] = path
+    if errors:
+        raise ValueError("\n".join(errors))
+    return result
+
+
+def check_burn_targets(videos: list[Path], subtitles: dict[Path, Path],
+                       out_dir: Path, report_path: Path | None = None) -> None:
+    """Never let an output replace a source, even through a symlink/hardlink."""
+    inputs = videos + list(subtitles.values())
+    targets: list[Path] = []
+    pending = [out_dir / f"{video.stem}.sub.mp4" for video in videos]
+    pending.append(out_dir / "run.log")
+    if report_path is not None:
+        pending.append(report_path)
+    for target in pending:
+        if target.exists() and not target.is_file():
+            raise ValueError(f"output target is not a file: {target}")
+        for path in inputs + targets:
+            if (target.resolve() == path.resolve()
+                    or (target.exists() and path.exists() and target.samefile(path))):
+                raise ValueError(f"output target {target} would overwrite "
+                                 f"an input or another output: {path}")
+        targets.append(target)
 
 
 def confirm_overwrites(videos: list[Path], out_dir: Path,
@@ -107,7 +182,30 @@ def process_video(video: Path, out_dir: Path, cfg, ffmpeg: Path,
         print(f"[skip] exists: {zh_srt.name}")
         record.stages.append(StageRecord("translate", "skipped"))
 
-    if force or not _valid_srt(bilingual):
+    if cfg.vocabulary_enabled:
+        t0 = time.monotonic()
+        try:
+            from . import vocabulary
+            result = vocabulary.generate(ja_srt, zh_srt, out_dir, cfg, force=force)
+            levels = [level for level in ("N5", "N4", "N3", "N2", "N1", "未分级")
+                      if result.counts.get(level, 0) or level in ("N2", "N1", "未分级")]
+            counts = ", ".join(f"{level}={result.counts.get(level, 0)}" for level in levels)
+            note = (f"{result.total_count} words; {counts or 'no target words'}; "
+                    f"degraded={result.degraded_count}")
+            if not result.total_count:
+                note += "; no target words"
+            print(f"[vocabulary] {result.status}: {note}")
+            record.stages.append(StageRecord(
+                "vocabulary", result.status, time.monotonic() - t0, note))
+        except Exception as e:
+            message = safe_error(e, cfg.api_key)
+            print(f"[vocabulary] failed: {message}; continuing merge/burn",
+                  file=sys.stderr)
+            record.status, record.error = "partial", f"vocabulary: {message}"
+            record.stages.append(StageRecord(
+                "vocabulary", "failed", time.monotonic() - t0, message))
+
+    if force or not merge_mod.is_fresh(ja_srt, zh_srt, bilingual):
         t0 = time.monotonic()
         merge_mod.merge(ja_srt, zh_srt, out_dir)
         record.stages.append(StageRecord("merge", "done", time.monotonic() - t0))
@@ -127,13 +225,73 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"input path does not exist: {src}", file=sys.stderr)
         return 2
     out_dir = Path(args.output_dir)
-    videos = collect_videos(src)
+    try:
+        videos = collect_videos(src)
+    except (ValueError, OSError) as e:
+        print(f"invalid input: {e}", file=sys.stderr)
+        return 2
 
     try:
         cfg, ffmpeg = preflight.run(videos, out_dir)
     except preflight.PreflightError as e:
-        print(f"Preflight checks failed:\n{e}", file=sys.stderr)
+        print(f"Preflight checks failed:\n{safe_error(e)}", file=sys.stderr)
         return 2
+
+    reporter = Reporter(out_dir, version=__version__,
+                        asr_model=cfg.asr_model_id,
+                        translate_model=cfg.model, base_url=cfg.base_url,
+                        bitrate=cfg.video_bitrate,
+                        vocabulary_config={
+                            "enabled": getattr(cfg, "vocabulary_enabled", False),
+                            "learner_level": getattr(cfg, "learner_level", "N3"),
+                            "include_unknown": getattr(cfg, "include_unknown", True),
+                            "max_examples": getattr(cfg, "max_examples", 3)})
+    return _run_batch(videos, out_dir, reporter, args.yes or args.force,
+                      lambda video, record: process_video(
+                          video, out_dir, cfg, ffmpeg, args.force, record))
+
+
+def cmd_burn(args: argparse.Namespace) -> int:
+    out_dir = Path(args.output_dir).absolute()
+    try:
+        videos = collect_burn_videos(args.inputs)
+        subtitles = burn_subtitles(videos, out_dir, args.subtitles,
+                                   args.subtitle_dir)
+        check_burn_targets(videos, subtitles, out_dir)
+        cfg, ffmpeg = preflight.run_burn(videos, out_dir)
+    except (ValueError, OSError, preflight.PreflightError) as e:
+        print(f"Burn checks failed:\n{e}", file=sys.stderr)
+        return 2
+
+    def process(video: Path, record: VideoRecord) -> None:
+        subtitle = subtitles[video]
+        print(f"[burn] subtitles: {subtitle}")
+        t0 = time.monotonic()
+        burn_mod.burn(video, subtitle, out_dir, ffmpeg, cfg.force_style,
+                      cfg.video_bitrate)
+        record.stages.append(StageRecord("burn", "done",
+                                         time.monotonic() - t0))
+
+    reporter = Reporter(out_dir, version=__version__,
+                        asr_model="N/A (burn only)",
+                        translate_model="N/A (burn only)", base_url="N/A",
+                        bitrate=cfg.video_bitrate, burn_only=True)
+    try:
+        check_burn_targets(videos, subtitles, out_dir, reporter.path)
+    except (ValueError, OSError) as e:
+        print(f"Burn checks failed:\n{e}", file=sys.stderr)
+        return 2
+    return _run_batch(videos, out_dir, reporter, args.yes, process, subtitles)
+
+
+def _run_batch(videos: list[Path], out_dir: Path, reporter: Reporter,
+               assume_yes: bool,
+               process: Callable[[Path, VideoRecord], None],
+               subtitle_sources: dict[Path, Path] | None = None) -> int:
+    def make_record(video: Path, status: str = "done") -> VideoRecord:
+        return VideoRecord(
+            video.name, video.stem, status=status,
+            subtitle_source=str(subtitle_sources[video]) if subtitle_sources else "")
 
     # Tee all output into run.log once preflight passes, so long batch
     # runs leave a record even if the terminal is closed.
@@ -143,38 +301,38 @@ def cmd_run(args: argparse.Namespace) -> int:
     sys.stderr = _Tee(orig_err, log_fp)
     try:
         todo, skipped = confirm_overwrites(
-            videos, out_dir, assume_yes=args.yes or args.force)
-
-        reporter = Reporter(out_dir, version=__version__,
-                            asr_model=cfg.asr_model_id,
-                            translate_model=cfg.model, base_url=cfg.base_url,
-                            bitrate=cfg.video_bitrate)
+            videos, out_dir, assume_yes=assume_yes)
         reporter.records.extend(
-            VideoRecord(v.name, v.stem, status="skipped") for v in skipped)
+            make_record(v, "skipped") for v in skipped)
 
-        succeeded, failed = [], []
+        succeeded, partial, failed = [], [], []
         for i, video in enumerate(todo, 1):
             print(f"\n===== [{i}/{len(todo)}] {video.name} =====")
-            record = VideoRecord(video.name, video.stem)
+            record = make_record(video)
             reporter.records.append(record)
             try:
-                process_video(video, out_dir, cfg, ffmpeg, args.force, record)
-                succeeded.append(video)
+                process(video, record)
+                (partial if record.status == "partial" else succeeded).append(video)
             except Exception as e:
-                print(f"[error] failed to process {video.name}: {e}",
+                message = safe_error(e)
+                print(f"[error] failed to process {video.name}: {message}",
                       file=sys.stderr)
-                record.status, record.error = "failed", str(e)
+                record.status = "failed"
+                record.error = "; ".join(filter(None, (record.error, message)))
                 failed.append(video)
 
+        partial_summary = "" if reporter.burn_only else f", {len(partial)} partial"
         print(f"\n===== Summary: {len(succeeded)} succeeded, "
-              f"{len(failed)} failed, {len(skipped)} skipped =====")
+              f"{len(failed)} failed, {len(skipped)} skipped{partial_summary} =====")
+        for v in partial:
+            print(f"  partial: {v.name}")
         for v in failed:
             print(f"  failed: {v.name}")
         for v in skipped:
             print(f"  skipped: {v.name}")
         report_path = reporter.write()
         print(f"[report] run report -> {report_path}")
-        return 1 if failed else 0
+        return 1 if failed or partial else 0
     finally:
         sys.stdout, sys.stderr = orig_out, orig_err
         log_fp.close()
@@ -185,8 +343,9 @@ def main() -> None:
         prog="ja-video-subtitles",
         description="Japanese video -> JA/ZH bilingual hard subtitles "
                     "(macOS only)",
-        epilog="Prerequisites: config.toml with api_key, and "
-               "`ja-video-subtitles download` has been run once.")
+        epilog="For run: config.toml with api_key and "
+               "`ja-video-subtitles download` are required. "
+               "For burn: existing SRT subtitles and ffmpeg with libass.")
     ap.add_argument("--version", action="version",
                     version=f"%(prog)s {__version__}")
     sub = ap.add_subparsers(dest="command", required=True)
@@ -200,7 +359,7 @@ def main() -> None:
 
     p_run = sub.add_parser(
         "run", help="process videos",
-        description="Transcribe -> translate -> bilingual merge -> burn. "
+        description="Transcribe -> translate -> vocabulary -> bilingual merge -> burn. "
                     "All artifacts go into the -o directory.",
         epilog="examples:\n"
                "  ja-video-subtitles run video.mp4 -o out\n"
@@ -215,6 +374,29 @@ def main() -> None:
     p_run.add_argument("-y", "--yes", action="store_true",
                        help="overwrite existing outputs without asking")
 
+    p_burn = sub.add_parser(
+        "burn", help="burn existing SRT subtitles into one or more videos",
+        description="Burn existing subtitles locally, without ASR or translation. "
+                    "Outputs: <output-dir>/<video-stem>.sub.mp4.",
+        epilog="examples:\n"
+               "  ja-video-subtitles burn video.mp4 -o out\n"
+               "  ja-video-subtitles burn video.mp4 -s captions.srt -o out\n"
+               "  ja-video-subtitles burn a.mp4 b.mov -o out\n"
+               "  ja-video-subtitles burn ./videos --subtitle-dir ./subs -o out -y",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_burn.add_argument("inputs", nargs="+",
+                        help="one or more mp4/mov files or folders (nonrecursive)")
+    p_burn.add_argument("-o", "--output-dir", required=True,
+                        help="directory for output videos, log, and report")
+    subtitle_source = p_burn.add_mutually_exclusive_group()
+    subtitle_source.add_argument("-s", "--subtitles",
+                                 help="explicit SRT path (one video only)")
+    subtitle_source.add_argument(
+        "--subtitle-dir", help="directory of <video-stem>.bilingual.srt files "
+                               "(defaults to output-dir)")
+    p_burn.add_argument("-y", "--yes", action="store_true",
+                        help="overwrite existing outputs without asking")
+
     args = ap.parse_args()
     if args.command == "download":
         try:
@@ -224,7 +406,7 @@ def main() -> None:
             model_id = DEFAULT_ASR_MODEL
         download(model_id)
         return
-    sys.exit(cmd_run(args))
+    sys.exit(cmd_burn(args) if args.command == "burn" else cmd_run(args))
 
 
 if __name__ == "__main__":

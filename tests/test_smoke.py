@@ -155,7 +155,7 @@ class TestMisc(unittest.TestCase):
             p = Path(d) / "c.toml"
             p.write_text('[deepseek]\napi_key = "sk-x"\n', encoding="utf-8")
             cfg = load(p)
-            self.assertEqual(cfg.model, "deepseek-chat")
+            self.assertEqual(cfg.model, "deepseek-flash")
             self.assertEqual(cfg.video_bitrate, "8M")
 
 

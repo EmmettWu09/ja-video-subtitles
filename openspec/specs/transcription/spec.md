@@ -1,7 +1,8 @@
 # transcription Specification
 
 ## Purpose
-TBD - created by archiving change add-video-subtitle-pipeline. Update Purpose after archive.
+使用本地日语 ASR 模型将视频语音转换为带时间轴的日文字幕，过滤疑似幻觉并分割过长字幕。 输出的字幕包含可供翻译、词汇提取和硬字幕合成复用的编号、日文内容与起止时间，处理过程保留调试数据并显示进度。
+
 ## Requirements
 ### Requirement: 日文转写
 SHALL 使用 faster-whisper 加载日文专用模型 `kotoba-tech/kotoba-whisper-v2.0-faster`（允许 config 覆盖模型 ID），以 `language="ja"` 转写输入视频，在 `-o` 输出目录生成与视频同主名的 `xxx.ja.srt`，并同时输出含每条置信度（avg_logprob、no_speech_prob）的 `xxx.ja.json` 供排查。

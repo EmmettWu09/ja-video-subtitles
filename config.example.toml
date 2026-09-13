@@ -7,11 +7,20 @@ base_url = "https://api.deepseek.com"
 # Required: your DeepSeek API key (https://platform.deepseek.com)
 api_key = "your-api-key-here"
 # Translation model
-model = "deepseek-chat"
+model = "deepseek-flash"
 
 [asr]
 # Japanese ASR model (faster-whisper format); the default is recommended
 model_id = "kotoba-tech/kotoba-whisper-v2.0-faster"
+
+# Companion vocabulary glossary; standalone `burn` ignores this section.
+[vocabulary]
+enabled = true
+# Only levels harder than this level are included: N3 -> N2 and N1.
+# JLPT assignments are non-official references from the bundled dataset.
+learner_level = "N3"  # N5, N4, N3, N2, or N1
+include_unknown = true  # Also include ungraded content words and proper nouns.
+max_examples = 3  # Distinct subtitle contexts per word, from 1 to 10.
 
 # Translation prompts (optional; delete to use the built-in defaults).
 # user_template placeholders: {n} batch size, {context} preceding lines,

@@ -48,14 +48,16 @@ def probe_duration(ffprobe: Path, media: Path) -> float:
     return float(r.stdout.strip())
 
 
-def escape_filter_path(path: Path) -> str:
-    """Escape a path for use inside an ffmpeg filter argument.
+def escape_filter_value(value: str) -> str:
+    """Escape both the option-value parser and the enclosing filtergraph.
 
-    The path is additionally wrapped in single quotes by the caller
-    (filtergraph-level protection); here we escape \\ : ' and , for the
-    option-level parser, which unescapes them back to the original chars.
+    Return an unquoted value for subprocess argv (no shell escaping needed).
+    https://ffmpeg.org/ffmpeg-filters.html#Notes-on-filtergraph-escaping
     """
-    s = str(path.resolve())
-    for ch in ("\\", ":", "'", ","):
-        s = s.replace(ch, "\\" + ch)
-    return s
+    for specials in ("\\': \t\n\r", "\\'[],; \t\n\r"):
+        value = "".join("\\" + ch if ch in specials else ch for ch in value)
+    return value
+
+
+def escape_filter_path(path: Path) -> str:
+    return escape_filter_value(str(path.resolve()))

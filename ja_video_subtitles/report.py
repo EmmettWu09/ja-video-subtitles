@@ -1,4 +1,4 @@
-"""Run report: each `run` writes report-<timestamp>.md into the output dir.
+"""Run report: each `run` or `burn` writes report-<timestamp>.md into the output dir.
 
 Covers config summary, per-video stage durations/status, product listing
 (name/size/subtitle count) and failure reasons. The api_key is never
@@ -12,15 +12,16 @@ from pathlib import Path
 import srt
 
 STAGE_LABELS = {"transcribe": "Transcribe", "translate": "Translate",
+                "vocabulary": "Vocabulary",
                 "merge": "Bilingual merge", "burn": "Burn"}
 PRODUCT_SUFFIXES = [".ja.srt", ".ja.json", ".zh.srt", ".bilingual.srt",
-                    ".sub.mp4"]
+                    ".vocab.json", ".vocab.md", ".sub.mp4"]
 
 
 @dataclass
 class StageRecord:
     name: str            # transcribe / translate / merge / burn
-    status: str          # done / skipped
+    status: str          # done / skipped / failed
     seconds: float = 0.0
     note: str = ""
 
@@ -29,9 +30,10 @@ class StageRecord:
 class VideoRecord:
     name: str
     stem: str
-    status: str = "done"  # done / failed / skipped
+    status: str = "done"  # done / partial / failed / skipped
     stages: list[StageRecord] = field(default_factory=list)
     error: str = ""
+    subtitle_source: str = ""
 
 
 def _fmt_size(n: int) -> str:
@@ -55,20 +57,25 @@ def _count_srt(path: Path) -> int | None:
 
 class Reporter:
     def __init__(self, out_dir: Path, *, version: str, asr_model: str,
-                 translate_model: str, base_url: str, bitrate: str):
+                 translate_model: str, base_url: str, bitrate: str,
+                 burn_only: bool = False, vocabulary_config: dict | None = None):
         self.out_dir = out_dir
         self.version = version
         self.asr_model = asr_model
         self.translate_model = translate_model
         self.base_url = base_url
         self.bitrate = bitrate
+        self.burn_only = burn_only
+        self.vocabulary_config = vocabulary_config
         self.start = datetime.now()
+        self.path = self.out_dir / f"report-{self.start:%Y%m%d-%H%M%S}.md"
         self.records: list[VideoRecord] = []
 
     def write(self) -> Path:
         end = datetime.now()
         total = (end - self.start).total_seconds()
         done = [r for r in self.records if r.status == "done"]
+        partial = [r for r in self.records if r.status == "partial"]
         failed = [r for r in self.records if r.status == "failed"]
         skipped = [r for r in self.records if r.status == "skipped"]
 
@@ -79,20 +86,32 @@ class Reporter:
         L.append(f"- Finished: {end:%Y-%m-%d %H:%M:%S} "
                  f"(total {_fmt_dur(total)})")
         L.append(f"- Version: {self.version}")
+        partial_summary = "" if self.burn_only else f" / {len(partial)} partial"
         L.append(f"- Summary: {len(done)} succeeded / {len(failed)} failed / "
-                 f"{len(skipped)} skipped, {len(self.records)} video(s)")
+                 f"{len(skipped)} skipped{partial_summary}, "
+                 f"{len(self.records)} video(s)")
         L.append("")
         L.append("## Configuration")
         L.append("")
         L.append(f"- ASR model: `{self.asr_model}`")
         L.append(f"- Translator: `{self.translate_model}` ({self.base_url})")
+        subtitle_kind = "existing SRT" if self.burn_only else "JA/ZH bilingual"
         L.append(f"- Burn: h264_videotoolbox @ {self.bitrate}, "
-                 f"JA/ZH bilingual hard subtitles")
+                 f"{subtitle_kind} hard subtitles")
+        if self.vocabulary_config is not None:
+            cfg = self.vocabulary_config
+            L.append(f"- Vocabulary: enabled={cfg['enabled']}, "
+                     f"learner={cfg['learner_level']}, "
+                     f"include_unknown={cfg['include_unknown']}, "
+                     f"max_examples={cfg['max_examples']}")
         L.append("")
         L.append("## Details")
         for r in self.records:
             L.append("")
             L.append(f"### {r.name} ({r.status})")
+            if r.subtitle_source:
+                L.append("")
+                L.append(f"Subtitles: `{r.subtitle_source}`")
             if r.error:
                 L.append("")
                 L.append(f"Error: `{r.error}`")
@@ -103,7 +122,7 @@ class Reporter:
                 for s in r.stages:
                     label = STAGE_LABELS.get(s.name, s.name)
                     st = ("skipped (artifact exists)" if s.status == "skipped"
-                          else "done")
+                          else s.status)
                     dur = "-" if s.status == "skipped" else _fmt_dur(s.seconds)
                     L.append(f"| {label} | {st} | {dur} | {s.note} |")
             if r.status != "failed":
@@ -112,13 +131,12 @@ class Reporter:
         L.append("Full log: `run.log` in this directory.")
         L.append("")
 
-        path = self.out_dir / f"report-{self.start:%Y%m%d-%H%M%S}.md"
-        path.write_text("\n".join(L), encoding="utf-8")
-        return path
+        self.path.write_text("\n".join(L), encoding="utf-8")
+        return self.path
 
     def _product_lines(self, stem: str) -> list[str]:
         rows = []
-        for suffix in PRODUCT_SUFFIXES:
+        for suffix in ([".sub.mp4"] if self.burn_only else PRODUCT_SUFFIXES):
             p = self.out_dir / f"{stem}{suffix}"
             if not p.exists():
                 continue

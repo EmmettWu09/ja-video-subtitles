@@ -2,3 +2,6 @@ faster-whisper>=1.1,<2
 openai>=1.50,<2
 srt>=3.5,<4
 tqdm>=4.66,<5
+# Pin morphology and dictionary versions for reproducible vocabulary extraction.
+SudachiPy==0.6.11
+SudachiDict-core==20260723

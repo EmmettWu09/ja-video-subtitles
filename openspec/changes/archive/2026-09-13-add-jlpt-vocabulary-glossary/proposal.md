@@ -1,6 +1,6 @@
 # Proposal: add-jlpt-vocabulary-glossary
 
-Status: confirmed on 2026-09-06; implementation has not started.
+Status: implemented and validated on 2026-09-13; see validation.md.
 
 ## Why
 
@@ -18,10 +18,12 @@ JLPT 官方不提供一份可直接用于软件判级的固定公开词表，因
   - `<out>/xxx.vocab.md`：面向用户阅读的中日词典式词汇表；
   - `<out>/xxx.vocab.json`：结构化结果，用于校验、断点续跑和未来导入 Anki 等工具。
 - 默认学习者等级为 N3；收录比该等级更难的词。N3 配置下收录 N2、N1，并可选择收录 `未分级` 实义词。
-- 使用本地日语形态分析器生成基本形、读音和词性；使用版本化 JLPT 数据集判级；使用现有 OpenAI 兼容接口（默认 DeepSeek）补充简体中文词义。
+- 使用本地日语形态分析器生成基本形、读音和词性；使用固定版本的 `yomitan-jlpt-vocab` 数据集判级；使用现有 OpenAI 兼容接口（默认 DeepSeek `deepseek-flash`）补充简体中文词义。分词、判级在本地，接口只接收字幕文本或去重词汇及原句，不上传音视频。
 - 同一词按“基本形 + 读音”去重，保留出现次数及最多 3 个带时间戳的字幕语境。
-- 词汇阶段失败不得阻止双语字幕合成和视频烧录；无法生成完整词表时，该视频在报告中标记为 `partial` 并说明原因。
-- `--force` 强制重新生成词汇文件；正常断点续跑仅在源字幕哈希、学习者等级和词表数据版本均匹配时复用旧产物。
+- 词汇阶段整体失败不得阻止双语字幕合成和视频烧录；无法生成词表时，该视频在报告中标记为 `partial` 并说明原因，整批退出码为 1。单词级释义失败保留空释义及 warning，计入降级数，其他阶段成功时仍计为成功。
+- `--force` 强制重新生成词汇文件；正常断点续跑仅在两种产物合法，且日文/中文字幕哈希、学习者设置、词表数据与形态分析版本均匹配时复用旧产物。
+- `run` 同时检查双语字幕是否与当前日文/中文字幕的合成结果一致；源字幕修改后更新词汇语境与双语字幕，确保随后成片使用最新内容。
+- 保留独立 `burn` 命令的单文件、多文件和目录支持。该命令只烧录现有 SRT，不运行词汇阶段，也不要求 API、ASR 模型、分词词典或 JLPT 数据就绪。
 
 ## Out of Scope
 
@@ -33,12 +35,12 @@ JLPT 官方不提供一份可直接用于软件判级的固定公开词表，因
 ## Impact
 
 - Added capability: `vocabulary`
-- Modified capabilities: `config`, `cli`
-- 新增 Python 依赖：日语形态分析器及其本地词典（建议 `SudachiPy` + `SudachiDict-core`）。
-- 新增一份有明确来源、版本与许可证记录的 JLPT 词汇映射数据。
+- Modified capabilities: `config`, `cli`, `burning`
+- 新增固定版本的 Python 依赖：`SudachiPy==0.6.11` 和 `SudachiDict-core==20260723`，保证形态分析可复现。
+- 内置 8,113 条 `yomitan-jlpt-vocab` 参考数据，锁定提交 `b062d4e38c4bdd0950ae1d4ec55f04b176182e03`；来源、转换、CC-BY-SA-4.0 许可及已知限制见 [数据说明](../../../../ja_video_subtitles/data/README.md)。
 - 翻译 API 调用量会小幅增加，但只对去重后的目标词汇生成释义。
 
-## Decisions Requiring Confirmation
+## Confirmed Decisions
 
 1. “高于 N3”按 N2、N1 解释；N3/N4/N5 不进入词表。
 2. 未分级实义词默认也收录，并明确标记 `未分级`；专有名词保留但标记为 `专有名词`。

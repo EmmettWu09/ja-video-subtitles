@@ -1,7 +1,8 @@
 # translation Specification
 
 ## Purpose
-TBD - created by archiving change add-video-subtitle-pipeline. Update Purpose after archive.
+使用 OpenAI 兼容翻译服务将日文字幕翻译为简体中文，保持编号对应，通过批次校验、重试及降级保障流水线持续运行。
+
 ## Requirements
 ### Requirement: 日译中
 SHALL 通过 config 中的 OpenAI 兼容接口（默认 DeepSeek）将 `xxx.ja.srt` 翻译为简体中文，在 `-o` 输出目录生成与视频同主名的 `xxx.zh.srt`，时间轴与索引 SHALL 与原文逐条一致。
