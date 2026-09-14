@@ -10,11 +10,12 @@ from typing import Callable
 import srt
 
 from . import __version__
+from . import audio as audio_mod
 from . import burn as burn_mod
 from . import merge as merge_mod
 from . import preflight, transcribe as transcribe_mod
 from . import translate as translate_mod
-from .config import load
+from .config import load, vocabulary_output_dir
 from .api_util import safe_error
 from .model import download
 from .report import Reporter, StageRecord, VideoRecord
@@ -106,11 +107,15 @@ def check_burn_targets(videos: list[Path], subtitles: dict[Path, Path],
                        out_dir: Path, report_path: Path | None = None) -> None:
     """Never let an output replace a source, even through a symlink/hardlink."""
     inputs = videos + list(subtitles.values())
-    targets: list[Path] = []
     pending = [out_dir / f"{video.stem}.sub.mp4" for video in videos]
     pending.append(out_dir / "run.log")
     if report_path is not None:
         pending.append(report_path)
+    _check_targets(inputs, pending)
+
+
+def _check_targets(inputs: list[Path], pending: list[Path]) -> None:
+    targets: list[Path] = []
     for target in pending:
         if target.exists() and not target.is_file():
             raise ValueError(f"output target is not a file: {target}")
@@ -122,20 +127,45 @@ def check_burn_targets(videos: list[Path], subtitles: dict[Path, Path],
         targets.append(target)
 
 
+def check_run_targets(videos: list[Path], out_dir: Path, cfg,
+                      report_path: Path) -> None:
+    stems: set[str] = set()
+    pending = [out_dir / "run.log", report_path]
+    vocab_dir = vocabulary_output_dir(cfg, out_dir)
+    formats = (("md", "json") if getattr(cfg, "vocabulary_format", "both") == "both"
+               else (cfg.vocabulary_format,))
+    for video in videos:
+        key = unicodedata.normalize("NFC", video.stem).casefold()
+        if key in stems:
+            raise ValueError(f"videos have the same output stem: {video.stem}; "
+                             "rename one or use separate output directories")
+        stems.add(key)
+        pending.extend(out_dir / f"{video.stem}{suffix}" for suffix in
+                       (".ja.srt", ".ja.json", ".zh.srt", ".bilingual.srt",
+                        ".sub.mp4", ".mp3"))
+        if getattr(cfg, "vocabulary_enabled", False):
+            pending.extend(vocab_dir / f"{video.stem}.vocab.{fmt}" for fmt in formats)
+    _check_targets(videos, pending)
+
+
 def confirm_overwrites(videos: list[Path], out_dir: Path,
-                       assume_yes: bool) -> tuple[list[Path], list[Path]]:
+                       assume_yes: bool, *, include_audio: bool = False
+                       ) -> tuple[list[Path], list[Path]]:
     """Return (to_process, skipped). All conflicts are resolved upfront,
     before any burning starts."""
     todo, skipped = [], []
     for v in videos:
-        target = out_dir / f"{v.stem}.sub.mp4"
-        if target.exists() and not assume_yes:
+        suffixes = (".sub.mp4", ".mp3") if include_audio else (".sub.mp4",)
+        existing = [out_dir / f"{v.stem}{suffix}" for suffix in suffixes
+                    if (out_dir / f"{v.stem}{suffix}").exists()]
+        if existing and not assume_yes:
+            names = ", ".join(str(target) for target in existing)
             try:
-                ans = input(f"{target} already exists. Overwrite? [y/N] "
+                ans = input(f"{names} already exists. Overwrite? [y/N] "
                             ).strip().lower()
             except EOFError:  # non-interactive session: keep the old file
                 print(f"[skip] non-interactive session, "
-                      f"keeping existing {target.name}")
+                      f"keeping existing {names}")
                 skipped.append(v)
                 continue
             if ans not in ("y", "yes"):
@@ -186,7 +216,8 @@ def process_video(video: Path, out_dir: Path, cfg, ffmpeg: Path,
         t0 = time.monotonic()
         try:
             from . import vocabulary
-            result = vocabulary.generate(ja_srt, zh_srt, out_dir, cfg, force=force)
+            result = vocabulary.generate(
+                ja_srt, zh_srt, vocabulary_output_dir(cfg, out_dir), cfg, force=force)
             levels = [level for level in ("N5", "N4", "N3", "N2", "N1", "未分级")
                       if result.counts.get(level, 0) or level in ("N2", "N1", "未分级")]
             counts = ", ".join(f"{level}={result.counts.get(level, 0)}" for level in levels)
@@ -218,6 +249,18 @@ def process_video(video: Path, out_dir: Path, cfg, ffmpeg: Path,
                   cfg.video_bitrate)
     record.stages.append(StageRecord("burn", "done", time.monotonic() - t0))
 
+    t0 = time.monotonic()
+    try:
+        audio_mod.export(video, out_dir, ffmpeg)
+        record.stages.append(StageRecord("audio", "done", time.monotonic() - t0))
+    except Exception as e:
+        message = safe_error(e, cfg.api_key)
+        print(f"[audio] failed: {message}", file=sys.stderr)
+        record.status = "partial"
+        record.error = "; ".join(filter(None, (record.error, f"audio: {message}")))
+        record.stages.append(StageRecord(
+            "audio", "failed", time.monotonic() - t0, message))
+
 
 def cmd_run(args: argparse.Namespace) -> int:
     src = Path(args.input)
@@ -232,7 +275,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        cfg, ffmpeg = preflight.run(videos, out_dir)
+        overrides = {name: getattr(args, name) for name in
+                     ("vocab_output_dir", "vocab_format")
+                     if getattr(args, name, None) is not None}
+        cfg, ffmpeg = preflight.run(videos, out_dir, **overrides)
     except preflight.PreflightError as e:
         print(f"Preflight checks failed:\n{safe_error(e)}", file=sys.stderr)
         return 2
@@ -245,10 +291,18 @@ def cmd_run(args: argparse.Namespace) -> int:
                             "enabled": getattr(cfg, "vocabulary_enabled", False),
                             "learner_level": getattr(cfg, "learner_level", "N3"),
                             "include_unknown": getattr(cfg, "include_unknown", True),
-                            "max_examples": getattr(cfg, "max_examples", 3)})
+                            "max_examples": getattr(cfg, "max_examples", 3),
+                            "output_dir": str(vocabulary_output_dir(cfg, out_dir)),
+                            "format": getattr(cfg, "vocabulary_format", "both")})
+    try:
+        check_run_targets(videos, out_dir, cfg, reporter.path)
+    except (ValueError, OSError) as e:
+        print(f"Output checks failed:\n{safe_error(e)}", file=sys.stderr)
+        return 2
     return _run_batch(videos, out_dir, reporter, args.yes or args.force,
                       lambda video, record: process_video(
-                          video, out_dir, cfg, ffmpeg, args.force, record))
+                          video, out_dir, cfg, ffmpeg, args.force, record),
+                      include_audio=True)
 
 
 def cmd_burn(args: argparse.Namespace) -> int:
@@ -287,7 +341,8 @@ def cmd_burn(args: argparse.Namespace) -> int:
 def _run_batch(videos: list[Path], out_dir: Path, reporter: Reporter,
                assume_yes: bool,
                process: Callable[[Path, VideoRecord], None],
-               subtitle_sources: dict[Path, Path] | None = None) -> int:
+               subtitle_sources: dict[Path, Path] | None = None, *,
+               include_audio: bool = False) -> int:
     def make_record(video: Path, status: str = "done") -> VideoRecord:
         return VideoRecord(
             video.name, video.stem, status=status,
@@ -301,7 +356,7 @@ def _run_batch(videos: list[Path], out_dir: Path, reporter: Reporter,
     sys.stderr = _Tee(orig_err, log_fp)
     try:
         todo, skipped = confirm_overwrites(
-            videos, out_dir, assume_yes=assume_yes)
+            videos, out_dir, assume_yes=assume_yes, include_audio=include_audio)
         reporter.records.extend(
             make_record(v, "skipped") for v in skipped)
 
@@ -360,15 +415,23 @@ def main() -> None:
     p_run = sub.add_parser(
         "run", help="process videos",
         description="Transcribe -> translate -> vocabulary -> bilingual merge -> burn. "
-                    "All artifacts go into the -o directory.",
+                    "Export MP3 audio alongside the subtitled video. "
+                    "Vocabulary output location and format are configurable.",
         epilog="examples:\n"
                "  ja-video-subtitles run video.mp4 -o out\n"
                "  ja-video-subtitles run ./videos -o out -y   # batch, auto-overwrite\n"
+               "  ja-video-subtitles run video.mp4 -o out --vocab-output-dir words --vocab-format md\n"
                "  ja-video-subtitles run video.mov -o out --force   # redo all stages",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p_run.add_argument("input", help="an mp4/mov file or a folder of them")
     p_run.add_argument("-o", "--output-dir", required=True,
-                       help="directory for all output artifacts")
+                       help="directory for subtitles, sub.mp4, MP3, log, and report")
+    p_run.add_argument("--vocab-output-dir", metavar="DIR",
+                       help="vocabulary directory (overrides vocabulary.output_dir; "
+                            "defaults to output-dir)")
+    p_run.add_argument("--vocab-format", choices=("md", "json", "both"),
+                       help="vocabulary file format (overrides vocabulary.format; "
+                            "default: both)")
     p_run.add_argument("--force", action="store_true",
                        help="redo every stage, ignoring existing artifacts")
     p_run.add_argument("-y", "--yes", action="store_true",

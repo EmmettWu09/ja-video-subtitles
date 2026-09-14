@@ -371,12 +371,25 @@ class TestBurnCli(unittest.TestCase):
         with mock.patch.object(cli, "cmd_run", return_value=0) as run, \
                 mock.patch.object(cli, "cmd_burn") as burn:
             self.assertEqual(self.invoke("run", "video.mp4", "-o", self.out,
-                                         "--force", "-y")[0], 0)
+                                         "--force", "-y", "--vocab-format", "md",
+                                         "--vocab-output-dir", "words")[0], 0)
         args = run.call_args.args[0]
         self.assertEqual(args.input, "video.mp4")
         self.assertTrue(args.force)
         self.assertTrue(args.yes)
+        self.assertEqual(args.vocab_format, "md")
+        self.assertEqual(args.vocab_output_dir, "words")
         burn.assert_not_called()
+
+    def test_invalid_vocab_format_and_burn_vocab_options_are_rejected(self):
+        for command, options in (("run", ("--vocab-format", "csv")),
+                                 ("burn", ("--vocab-format", "md")),
+                                 ("burn", ("--vocab-output-dir", "words"))):
+            with self.subTest(command=command, options=options):
+                self.assertEqual(self.invoke(command, "video.mp4", "-o", self.out,
+                                             *options)[0], 2)
+        self.full_preflight.assert_not_called()
+        self.preflight.assert_not_called()
 
 
 if __name__ == "__main__":

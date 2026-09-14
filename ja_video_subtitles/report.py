@@ -13,9 +13,9 @@ import srt
 
 STAGE_LABELS = {"transcribe": "Transcribe", "translate": "Translate",
                 "vocabulary": "Vocabulary",
-                "merge": "Bilingual merge", "burn": "Burn"}
+                "merge": "Bilingual merge", "burn": "Burn", "audio": "MP3 export"}
 PRODUCT_SUFFIXES = [".ja.srt", ".ja.json", ".zh.srt", ".bilingual.srt",
-                    ".vocab.json", ".vocab.md", ".sub.mp4"]
+                    ".vocab.json", ".vocab.md", ".sub.mp4", ".mp3"]
 
 
 @dataclass
@@ -104,6 +104,8 @@ class Reporter:
                      f"learner={cfg['learner_level']}, "
                      f"include_unknown={cfg['include_unknown']}, "
                      f"max_examples={cfg['max_examples']}")
+            L.append(f"- Vocabulary output: `{cfg.get('output_dir', self.out_dir)}`, "
+                     f"format={cfg.get('format', 'both')}")
         L.append("")
         L.append("## Details")
         for r in self.records:
@@ -126,7 +128,7 @@ class Reporter:
                     dur = "-" if s.status == "skipped" else _fmt_dur(s.seconds)
                     L.append(f"| {label} | {st} | {dur} | {s.note} |")
             if r.status != "failed":
-                L.extend(self._product_lines(r.stem))
+                L.extend(self._product_lines(r))
         L.append("")
         L.append("Full log: `run.log` in this directory.")
         L.append("")
@@ -134,13 +136,26 @@ class Reporter:
         self.path.write_text("\n".join(L), encoding="utf-8")
         return self.path
 
-    def _product_lines(self, stem: str) -> list[str]:
+    def _product_lines(self, record: VideoRecord) -> list[str]:
         rows = []
         for suffix in ([".sub.mp4"] if self.burn_only else PRODUCT_SUFFIXES):
-            p = self.out_dir / f"{stem}{suffix}"
-            if not p.exists():
+            directory = self.out_dir
+            if suffix.startswith(".vocab.") and self.vocabulary_config is not None:
+                cfg = self.vocabulary_config
+                if not cfg["enabled"]:
+                    continue
+                if cfg.get("format", "both") not in ("both", suffix.rsplit(".", 1)[1]):
+                    continue
+                directory = Path(cfg.get("output_dir", self.out_dir))
+            if suffix == ".mp3" and any(
+                    stage.name == "audio" and stage.status == "failed"
+                    for stage in record.stages):
                 continue
-            line = f"- `{p.name}` ({_fmt_size(p.stat().st_size)}"
+            p = directory / f"{record.stem}{suffix}"
+            if not p.is_file():
+                continue
+            display_path = p.name if directory.resolve() == self.out_dir.resolve() else str(p.absolute())
+            line = f"- `{display_path}` ({_fmt_size(p.stat().st_size)}"
             if suffix.endswith(".srt"):
                 n = _count_srt(p)
                 if n is not None:

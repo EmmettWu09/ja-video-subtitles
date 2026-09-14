@@ -335,6 +335,167 @@ class VocabularyTests(unittest.TestCase):
         self.assertEqual(self.run_generate().status, "done")
         self.assertEqual(self.run_generate().status, "skipped")
 
+    def test_formats_create_only_selected_files_in_requested_directory(self):
+        for output_format, extensions in (("md", {"md"}), ("json", {"json"}),
+                                           ("both", {"md", "json"})):
+            with self.subTest(output_format=output_format):
+                self.out = self.directory / "separate vocabulary" / output_format
+                result = self.run_generate(replace(CFG, vocabulary_format=output_format))
+                self.assertEqual({path.name for path in self.out.iterdir()},
+                                 {f"film.vocab.{extension}" for extension in extensions})
+                self.assertEqual(result.json_path,
+                                 self.out / "film.vocab.json" if "json" in extensions else None)
+                self.assertEqual(result.markdown_path,
+                                 self.out / "film.vocab.md" if "md" in extensions else None)
+                self.assertEqual(result.total_count, 2)
+        self.assertFalse((self.directory / "film.vocab.md").exists())
+        self.assertFalse((self.directory / "film.vocab.json").exists())
+
+    def test_single_format_resume_needs_no_unselected_artifact(self):
+        for output_format, unselected_extension in (("md", "json"), ("json", "md")):
+            with self.subTest(output_format=output_format):
+                self.out = self.directory / output_format
+                cfg = replace(CFG, vocabulary_format=output_format)
+                self.run_generate(cfg)
+                unselected = self.out / f"film.vocab.{unselected_extension}"
+                self.assertFalse(unselected.exists())
+                with mock.patch.object(vocab, "_load_tokenizer",
+                                       side_effect=AssertionError("fresh artifact must be reused")), \
+                        mock.patch("openai.OpenAI", side_effect=AssertionError("must not call API")):
+                    self.assertEqual(vocab.generate(self.ja, self.zh, self.out, cfg).status, "skipped")
+                    unselected.write_bytes(b"stale unselected content")
+                    old_mtime = unselected.stat().st_mtime_ns
+                    self.assertEqual(vocab.generate(self.ja, self.zh, self.out, cfg).status, "skipped")
+                self.assertEqual(unselected.read_bytes(), b"stale unselected content")
+                self.assertEqual(unselected.stat().st_mtime_ns, old_mtime)
+
+    def test_switching_formats_reuses_structured_content_without_api(self):
+        for previous in ("md", "json", "both"):
+            for selected in ("md", "json", "both"):
+                if previous == selected:
+                    continue
+                with self.subTest(previous=previous, selected=selected):
+                    self.out = self.directory / f"{previous}-to-{selected}"
+                    self.run_generate(replace(CFG, vocabulary_format=previous))
+                    cfg = replace(CFG, vocabulary_format=selected)
+                    unselected = (self.out / f"film.vocab.{'json' if selected == 'md' else 'md'}"
+                                  if selected != "both" else None)
+                    before = (unselected.read_bytes() if unselected is not None and unselected.exists()
+                              else None)
+                    calls = len(self.client.calls)
+                    with mock.patch.object(vocab, "_load_tokenizer",
+                                           side_effect=AssertionError("format change must reuse data")):
+                        result = self.run_generate(cfg)
+                        self.assertEqual(result.status, "skipped" if (previous, selected) == ("both", "json")
+                                         else "done")
+                        self.assertEqual(self.run_generate(cfg).status, "skipped")
+                    self.assertEqual(len(self.client.calls), calls)
+                    self.assertEqual(result.total_count, 2)
+                    if before is not None:
+                        self.assertEqual(unselected.read_bytes(), before)
+                    elif unselected is not None:
+                        self.assertFalse(unselected.exists())
+
+    def test_single_selected_artifact_missing_or_corrupt_regenerates(self):
+        for output_format in ("md", "json"):
+            with self.subTest(output_format=output_format):
+                self.out = self.directory / output_format
+                cfg = replace(CFG, vocabulary_format=output_format)
+                result = self.run_generate(cfg)
+                selected = result.markdown_path if output_format == "md" else result.json_path
+                for corrupted in (None, "truncated"):
+                    if corrupted is None:
+                        selected.unlink()
+                    else:
+                        selected.write_text(corrupted, encoding="utf-8")
+                    calls = len(self.client.calls)
+                    self.assertEqual(self.run_generate(cfg).status, "done")
+                    self.assertEqual(len(self.client.calls), calls + 1)
+                    self.assertEqual(self.run_generate(cfg).status, "skipped")
+                if output_format == "md":
+                    selected.write_text(selected.read_text(encoding="utf-8").replace("中文：", "中文修改：", 1),
+                                        encoding="utf-8")
+                else:
+                    data = json.loads(selected.read_text(encoding="utf-8"))
+                    data["entries"][0]["occurrence_count"] = "bad"
+                    selected.write_text(json.dumps(data), encoding="utf-8")
+                calls = len(self.client.calls)
+                self.assertEqual(self.run_generate(cfg).status, "done")
+                self.assertEqual(len(self.client.calls), calls + 1)
+
+    def test_format_switch_preserves_newest_glosses_after_forced_single_output(self):
+        for forced_format in ("md", "json"):
+            with self.subTest(forced_format=forced_format):
+                self.out = self.directory / forced_format
+                self.run_generate(replace(CFG, vocabulary_format="md"))
+                self.run_generate(replace(CFG, vocabulary_format="json"))
+                updated_client = Client(lambda entries: json.dumps({"items": [
+                    {"id": entry["id"], "meaning_zh": "更新释义", "note_zh": ""}
+                    for entry in entries]}, ensure_ascii=False))
+                self.run_generate(replace(CFG, vocabulary_format=forced_format),
+                                  client=updated_client, force=True)
+                with mock.patch.object(vocab, "_load_tokenizer",
+                                       side_effect=AssertionError("format change must reuse latest data")):
+                    result = self.run_generate()
+                self.assertEqual(result.status, "done")
+                self.assertTrue(all(entry["meaning_zh"] == "更新释义" for entry in self.entries(result)))
+                self.assertIn("更新释义", result.markdown_path.read_text(encoding="utf-8"))
+                self.assertEqual(len(updated_client.calls), 1)
+
+    def test_markdown_embedded_cache_checks_schema_and_safely_encodes_text(self):
+        cfg = replace(CFG, vocabulary_format="md")
+        client = Client(lambda entries: json.dumps({"items": [
+            {"id": entry["id"], "meaning_zh": "内容 --> <!-- 保留", "note_zh": "说明"}
+            for entry in entries]}, ensure_ascii=False))
+        result = self.run_generate(cfg, client=client)
+        text = result.markdown_path.read_text(encoding="utf-8")
+        self.assertEqual(text.count(vocab.MARKDOWN_CACHE_PREFIX), 1)
+        self.assertEqual(text.count("-->"), 1)
+        self.assertEqual(self.run_generate(cfg, client=client).status, "skipped")
+        data = vocab._read_fresh_document(
+            result.markdown_path,
+            {"ja_srt": self.ja.name, "zh_srt": self.zh.name,
+             "ja_srt_sha256": vocab.hashlib.sha256(self.ja.read_bytes()).hexdigest(),
+             "zh_srt_sha256": vocab.hashlib.sha256(self.zh.read_bytes()).hexdigest()},
+            vocab._settings(cfg, self.lexicon),
+            {"name": self.lexicon.name, "version": self.lexicon.version,
+             "source_url": self.lexicon.source_url, "license": self.lexicon.license}, markdown=True)
+        self.assertIsNotNone(data)
+        data["schema_version"] = 0
+        result.markdown_path.write_text(vocab._standalone_markdown(data), encoding="utf-8")
+        self.assertEqual(self.run_generate(cfg, client=client).status, "done")
+        self.assertEqual(len(client.calls), 2)
+
+    def test_standalone_freshness_invalidates_changed_inputs_settings_and_force(self):
+        for output_format in ("md", "json"):
+            with self.subTest(output_format=output_format):
+                self.out = self.directory / output_format
+                cfg = replace(CFG, vocabulary_format=output_format)
+                self.run_generate(cfg)
+                calls = len(self.client.calls)
+                self.assertEqual(self.run_generate(cfg, force=True).status, "done")
+                self.assertEqual(len(self.client.calls), calls + 1)
+                self.zh.write_text(self.zh.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+                self.assertEqual(self.run_generate(cfg).status, "done")
+                self.assertEqual(self.run_generate(replace(cfg, max_examples=1)).status, "done")
+                self.lexicon.version += "-changed"
+                self.assertEqual(self.run_generate(cfg).status, "done")
+
+    def test_single_artifact_failed_replace_preserves_previous_output(self):
+        for output_format in ("md", "json"):
+            with self.subTest(output_format=output_format):
+                self.out = self.directory / output_format
+                cfg = replace(CFG, vocabulary_format=output_format)
+                result = self.run_generate(cfg)
+                selected = result.markdown_path if output_format == "md" else result.json_path
+                original = selected.read_bytes()
+                with mock.patch.object(vocab.os, "replace", side_effect=OSError("simulated interruption")):
+                    with self.assertRaisesRegex(OSError, "simulated interruption"):
+                        self.run_generate(cfg, force=True)
+                self.assertEqual(selected.read_bytes(), original)
+                self.assertEqual(list(self.out.glob(".*.tmp")), [])
+                self.assertEqual(self.run_generate(cfg).status, "skipped")
+
     def test_stage_failures_propagate_without_partial_artifacts(self):
         with mock.patch.object(vocab, "_load_tokenizer", side_effect=RuntimeError("dictionary broken")):
             with self.assertRaisesRegex(RuntimeError, "dictionary broken"):

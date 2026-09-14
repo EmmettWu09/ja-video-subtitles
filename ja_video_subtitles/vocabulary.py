@@ -6,6 +6,7 @@ computed locally and cannot be replaced by the model response.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -31,6 +32,7 @@ LEVELS = ("N5", "N4", "N3", "N2", "N1")
 UNKNOWN = "未分级"
 BATCH_MAX_ITEMS = 20
 MAX_RETRIES = 2
+MARKDOWN_CACHE_PREFIX = "<!-- ja-video-subtitles:vocab-cache:v1\n"
 # Function words often tagged as nouns or verbs; substantive single-kana words
 # (e.g. 木/き) are deliberately retained when they are independent lexemes.
 STOPLIST = frozenset({
@@ -50,8 +52,8 @@ class VocabularyResult:
     counts: dict[str, int]
     degraded_count: int
     total_count: int
-    json_path: Path
-    markdown_path: Path
+    json_path: Path | None
+    markdown_path: Path | None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -415,28 +417,61 @@ def render_markdown(data: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _read_fresh(json_path: Path, markdown_path: Path, source: dict, settings: dict,
-                dataset: dict) -> dict | None:
+def _standalone_markdown(data: dict) -> str:
+    # Preserve the structured source in the only selected artifact. Base64 keeps
+    # arbitrary subtitle/gloss text from terminating the HTML comment early.
+    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    encoded = base64.b64encode(payload).decode("ascii")
+    return render_markdown(data) + "\n" + MARKDOWN_CACHE_PREFIX + encoded + "\n-->\n"
+
+
+def _read_fresh_document(path: Path, source: dict, settings: dict, dataset: dict,
+                         *, markdown: bool = False) -> dict | None:
     try:
-        data = json.loads(json_path.read_text(encoding="utf-8"))
+        content = path.read_text(encoding="utf-8")
+        if markdown:
+            _, marker, payload = content.rpartition(MARKDOWN_CACHE_PREFIX)
+            if not marker or not payload.endswith("\n-->\n"):
+                return None
+            data = json.loads(base64.b64decode(payload.removesuffix("\n-->\n"), validate=True))
+        else:
+            data = json.loads(content)
         if (not _valid_document(data) or data["source"] != source
-                or data["settings"] != settings or data["dataset"] != dataset
-                or markdown_path.read_text(encoding="utf-8") != render_markdown(data)):
+                or data["settings"] != settings or data["dataset"] != dataset):
+            return None
+        if markdown and content != _standalone_markdown(data):
             return None
         return data
     except (OSError, UnicodeError, ValueError, KeyError, TypeError):
         return None
 
 
-def _write_artifacts(json_path: Path, markdown_path: Path, data: dict) -> None:
+def _selected_artifacts_match(json_path: Path | None, markdown_path: Path | None,
+                              data: dict) -> bool:
+    try:
+        if json_path is not None and json.loads(json_path.read_text(encoding="utf-8")) != data:
+            return False
+        if markdown_path is not None:
+            expected = render_markdown(data) if json_path is not None else _standalone_markdown(data)
+            if markdown_path.read_text(encoding="utf-8") != expected:
+                return False
+        return True
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return False
+
+
+def _write_artifacts(json_path: Path | None, markdown_path: Path | None, data: dict) -> None:
     if not _valid_document(data):
         raise ValueError("Vocabulary generated an invalid document; no artifacts were written.")
+    artifacts = []
+    if markdown_path is not None:
+        content = render_markdown(data) if json_path is not None else _standalone_markdown(data)
+        artifacts.append((markdown_path, content))
+    if json_path is not None:
+        artifacts.append((json_path, json.dumps(data, ensure_ascii=False, indent=2) + "\n"))
     temporary: list[Path] = []
     try:
-        for target, content in (
-            (json_path, json.dumps(data, ensure_ascii=False, indent=2) + "\n"),
-            (markdown_path, render_markdown(data)),
-        ):
+        for target, content in artifacts:
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent,
                                              prefix=f".{target.name}.", suffix=".tmp",
                                              delete=False) as handle:
@@ -444,16 +479,17 @@ def _write_artifacts(json_path: Path, markdown_path: Path, data: dict) -> None:
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())
-        # JSON is the commit marker. A crash between replacements leaves complete
-        # files whose pair mismatch is detected by exact Markdown validation.
-        os.replace(temporary[1], markdown_path)
-        os.replace(temporary[0], json_path)
+        # In both mode JSON is the commit marker. An interrupted pair update is
+        # detected by exact Markdown validation on the next run.
+        for path, (target, _) in zip(temporary, artifacts):
+            os.replace(path, target)
     finally:
         for path in temporary:
             path.unlink(missing_ok=True)
 
 
-def _result(data: dict, status: str, json_path: Path, markdown_path: Path) -> VocabularyResult:
+def _result(data: dict, status: str, json_path: Path | None,
+            markdown_path: Path | None) -> VocabularyResult:
     counts = {level: 0 for level in (*LEVELS, UNKNOWN)}
     warnings = []
     for entry in data["entries"]:
@@ -466,6 +502,9 @@ def _result(data: dict, status: str, json_path: Path, markdown_path: Path) -> Vo
 
 def generate(ja_srt: Path, zh_srt: Path, out_dir: Path, cfg,
              client=None, force: bool = False) -> VocabularyResult:
+    output_format = getattr(cfg, "vocabulary_format", "both")
+    if output_format not in ("md", "json", "both"):
+        raise ValueError("Vocabulary format must be md, json, or both.")
     lexicon = jlpt_lexicon.load()
     source = {"ja_srt": ja_srt.name, "zh_srt": zh_srt.name,
               "ja_srt_sha256": hashlib.sha256(ja_srt.read_bytes()).hexdigest(),
@@ -474,11 +513,30 @@ def generate(ja_srt: Path, zh_srt: Path, out_dir: Path, cfg,
     dataset = {"name": lexicon.name, "version": lexicon.version,
                "source_url": lexicon.source_url, "license": lexicon.license}
     stem = ja_srt.name.removesuffix(".ja.srt") if ja_srt.name.endswith(".ja.srt") else ja_srt.stem
-    json_path, markdown_path = out_dir / f"{stem}.vocab.json", out_dir / f"{stem}.vocab.md"
+    available_json = out_dir / f"{stem}.vocab.json"
+    available_markdown = out_dir / f"{stem}.vocab.md"
+    json_path = available_json if output_format in ("json", "both") else None
+    markdown_path = available_markdown if output_format in ("md", "both") else None
+    cached = None
     if not force:
-        cached = _read_fresh(json_path, markdown_path, source, settings, dataset)
-        if cached is not None:
+        # A forced single-format run can leave the other file valid but older.
+        # Keep the newest structured document to preserve updated glosses when
+        # switching formats; selected-first order breaks equal-timestamp ties.
+        candidates = [(available_json, False), (available_markdown, True)]
+        if output_format == "md":
+            candidates.reverse()
+        for path, is_markdown in candidates:
+            candidate = _read_fresh_document(path, source, settings, dataset, markdown=is_markdown)
+            if candidate is not None and (cached is None or
+                    datetime.fromisoformat(candidate["generated_at"]) >
+                    datetime.fromisoformat(cached["generated_at"])):
+                cached = candidate
+        if cached is not None and _selected_artifacts_match(json_path, markdown_path, cached):
             return _result(cached, "skipped", json_path, markdown_path)
+    if cached is not None:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        _write_artifacts(json_path, markdown_path, cached)
+        return _result(cached, "done", json_path, markdown_path)
     entries = _extract(_read_subtitles(ja_srt), _read_subtitles(zh_srt), cfg, lexicon)
     owned_client = None
     try:
@@ -500,6 +558,7 @@ def generate(ja_srt: Path, zh_srt: Path, out_dir: Path, cfg,
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_artifacts(json_path, markdown_path, data)
     result = _result(data, "done", json_path, markdown_path)
+    destinations = ", ".join(str(path) for path in (markdown_path, json_path) if path is not None)
     print(f"[vocabulary] {result.total_count} words, {result.degraded_count} degraded glosses "
-          f"-> {markdown_path}")
+          f"-> {destinations}")
     return result

@@ -1,9 +1,6 @@
-# config Specification
+# Spec: config
 
-## Purpose
-集中管理翻译服务、ASR、字幕样式、视频码率和词汇学习设置，并按完整流水线或独立烧录验证所需配置。 各配置项具有明确的默认值、合法取值及失败提示，使批量运行可重复，并使独立烧录能够在没有翻译密钥或模型时工作。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 配置文件
 
@@ -73,10 +70,3 @@
 
 - **WHEN** `run` 的 vocabulary.output_dir 不是字符串，或 vocabulary.format 不是 md/json/both
 - **THEN** 在处理前给出字段及合法类型/取值错误，退出码为 2
-
-### Requirement: 模板与密钥隔离
-仓库 SHALL 提供 `config.example.toml` 模板入库；`config.toml` 真实密钥文件 SHALL 被 `.gitignore` 排除，不得入库。
-
-#### Scenario: 首次配置
-- **WHEN** 用户首次使用
-- **THEN** 可复制 `config.example.toml` 为 `config.toml`，仅需填入 api_key 即可运行

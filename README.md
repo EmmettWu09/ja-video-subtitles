@@ -2,7 +2,7 @@
 
 **Any Japanese video in -> one command -> JA/ZH bilingual hard-subtitled video out.**
 
-Pipeline: `video -> transcribe (kotoba-whisper) -> translate (DeepSeek) -> vocabulary -> bilingual merge -> burn (ffmpeg)`
+Pipeline: `video -> transcribe (kotoba-whisper) -> translate (DeepSeek) -> vocabulary -> bilingual merge -> burn (ffmpeg) -> export MP3`
 
 ## How it works
 
@@ -10,13 +10,14 @@ Pipeline: `video -> transcribe (kotoba-whisper) -> translate (DeepSeek) -> vocab
 |---|---|---|
 | Transcribe | Local ASR (kotoba-whisper on CPU, no network): Japanese audio -> timestamped JA subtitles, with VAD + hallucination filtering + punctuation-based splitting | `xxx.ja.srt` |
 | Translate | JA -> ZH via DeepSeek API, in numbered batches with context; retries/falls back automatically on malformed replies | `xxx.zh.srt` |
-| Vocabulary | Local morphology and unofficial JLPT lookup, with Simplified Chinese definitions from the configured API | `xxx.vocab.md`, `xxx.vocab.json` |
+| Vocabulary | Local morphology and unofficial JLPT lookup, with Simplified Chinese definitions from the configured API | `xxx.vocab.md` and/or `xxx.vocab.json` |
 | Bilingual merge | Aligns JA/ZH line by line (JA on top, ZH below); local, instant | `xxx.bilingual.srt` |
 | Burn | ffmpeg draws the subtitles onto frames and re-encodes with VideoToolbox hardware encoding | `xxx.sub.mp4` |
+| Audio | Locally converts the source video’s first audio stream to MP3 | `xxx.mp3` |
 
-Transcription, vocabulary extraction/JLPT lookup, merging, and burning run locally. Translation sends subtitle text to the configured API; vocabulary definitions send deduplicated words and Japanese example sentences to that same service. Audio and video are not uploaded by these stages. The default API model is `deepseek-flash`. Per-stage durations appear in `report-*.md`.
+Transcription, vocabulary extraction/JLPT lookup, merging, burning, and audio export run locally. Translation sends subtitle text to the configured API; vocabulary definitions send deduplicated words and Japanese example sentences to that same service. Audio and video are not uploaded by these stages. The default API model is `deepseek-flash`. Per-stage durations appear in `report-*.md`.
 
-Accepts mp4/mov, a single file or a whole folder; `burn` also accepts multiple files and folders in one command. All artifacts go to the `-o` directory; source videos are never modified.
+Accepts mp4/mov, a single file or a whole folder; `burn` also accepts multiple files and folders in one command. Subtitles, video, MP3, logs, and reports go to `-o`; vocabulary files can use a separate directory. Source videos are never modified.
 
 > **For `run`, input must be Japanese speech.** Transcription is fixed to `language="ja"` (kotoba-whisper is a Japanese-only model). There is no language detection: non-Japanese audio will NOT error out — it silently produces garbage subtitles. `burn` uses your existing SRT without transcribing audio.
 
@@ -61,6 +62,16 @@ For `burn` only, install Python, `srt`, `tqdm`, and ffmpeg; you can skip copying
 ./ja-video-subtitles run xxx.mp4 -o out --force                # redo every stage
 ```
 
+### Choose vocabulary outputs
+
+```bash
+./ja-video-subtitles run xxx.mp4 -o media --vocab-output-dir words --vocab-format md
+./ja-video-subtitles run xxx.mp4 -o media --vocab-output-dir words --vocab-format json
+./ja-video-subtitles run xxx.mp4 -o media --vocab-output-dir words --vocab-format both
+```
+
+These write the selected `xxx.vocab.md` and/or `xxx.vocab.json` into `words`. `media` still receives subtitles, `xxx.sub.mp4`, and `xxx.mp3`. The defaults are both vocabulary formats in `-o`. CLI options override the corresponding vocabulary config values; relative paths use your current working directory. Switching formats leaves old unselected files untouched and excludes them from the current report. These options do not enable vocabulary when `enabled = false`.
+
 ### Burn existing subtitles
 
 ```bash
@@ -79,15 +90,16 @@ Existing videos are confirmed upfront; `-y/--yes` overwrites them automatically,
 
 ### Full pipeline outputs and behavior
 
-`run` outputs in `-o` (nothing written next to the source):
+`run` outputs in `-o`, except vocabulary files when a separate directory is configured:
 
 | File | What |
 |---|---|
 | `xxx.ja.srt` / `xxx.ja.json` | Japanese subtitles / confidence log (for hallucination debugging) |
 | `xxx.zh.srt` | Chinese subtitles |
-| `xxx.vocab.md` / `xxx.vocab.json` | Readable vocabulary glossary / structured entries and resume metadata (when enabled) |
+| `xxx.vocab.md` / `xxx.vocab.json` | Selected vocabulary formats, in the effective vocabulary directory (when enabled) |
 | `xxx.bilingual.srt` | Bilingual subtitles (JA on top, ZH below) |
 | `xxx.sub.mp4` | Final hard-subtitled video |
+| `xxx.mp3` | Source video’s first audio stream, encoded as 192 kb/s MP3 alongside the video |
 | `report-<timestamp>.md` | Run report: config summary, per-stage durations, products, failures |
 | `run.log` | Full run log |
 
@@ -95,10 +107,10 @@ Behavior notes:
 
 - **Relative paths resolve against your cwd**; config and the model cache are always read from the project directory, so the tool works from anywhere.
 - **Resume**: existing valid artifacts are skipped; corrupt/empty ones are re-generated. `run` reuses bilingual subtitles only when they match a fresh merge of the current JA/ZH subtitles. Editing either source subtitle refreshes the bilingual output before burning; use `burn` to render a manually edited standalone SRT unchanged.
-- **Overwrite**: existing `xxx.sub.mp4` files trigger one batch of upfront `Overwrite? [y/N]` prompts; burning never blocks midway. Non-interactive sessions default to "no". `-y` auto-overwrites, `--force` redoes everything.
-- **Preflight**: platform, Python deps, ffmpeg+libass, config/api_key, DeepSeek connectivity, ASR model, disk space >= 2x input, and a writable output directory. When vocabulary is enabled, the tokenizer, local dictionary, and JLPT data/schema/version/checksums must also pass; failure exits before any video processing with a repair hint.
-- **Results**: a vocabulary stage failure still allows merge/burn, marks that video `partial`, and makes the batch exit with code `1`. Other processing failures are `failed`; confirmed skips are `skipped`. A word whose definition fails after retries remains in the glossary with an empty definition and warning; this counts as a degraded definition, not a stage failure. Reports list all four video result counts, vocabulary level/degradation counts, errors, and existing artifacts without API keys.
-- **Ctrl+C** during burning kills ffmpeg and removes the partial file.
+- **Overwrite**: existing `xxx.sub.mp4` or `xxx.mp3` files trigger one batch of upfront `Overwrite? [y/N]` prompts; burning never blocks midway. Non-interactive sessions default to "no". `-y` auto-overwrites, `--force` redoes everything. Declining either existing output skips that video. After confirmation, MP3 is exported again from the source; a failed export preserves any previous MP3.
+- **Preflight**: platform, Python deps, ffmpeg+libass+MP3 encoder, config/api_key, DeepSeek connectivity, ASR model, disk space >= 2x input, and a writable output directory. When vocabulary is enabled, its output directory must also be creatable and writable, and the tokenizer, local dictionary, and JLPT data/schema/version/checksums must also pass; failure exits before any video processing with a repair hint.
+- **Results**: a vocabulary stage failure still allows merge/burn, marks that video `partial`, and makes the batch exit with code `1`. An audio export failure after burning also marks the video `partial`, preserves the successful video, and continues the batch. Other processing failures are `failed`; confirmed skips are `skipped`. A word whose definition fails after retries remains in the glossary with an empty definition and warning; this counts as a degraded definition, not a stage failure. Reports list all four video result counts, vocabulary level/degradation counts, errors, selected vocabulary paths, and successful audio artifacts without API keys. A preserved old MP3 is not reported as a successful export after audio failure.
+- **Ctrl+C** during burning or audio export kills ffmpeg and removes its temporary/partial file; an existing final MP3 is preserved.
 
 ### Vocabulary settings
 
@@ -110,13 +122,17 @@ enabled = true
 learner_level = "N3"
 include_unknown = true
 max_examples = 3
+output_dir = ""  # empty: use -o; otherwise relative to cwd or absolute
+format = "both"  # md, json, or both
 ```
+
+`output_dir` must be a string; `format` must be `md`, `json`, or `both`. Override them per run with `--vocab-output-dir` and `--vocab-format`.
 
 `learner_level` accepts `N5` through `N1`: only harder levels are included, so N3 selects N2/N1. `include_unknown` includes ungraded content words and marks proper nouns; an ungraded word is not necessarily difficult. `enabled` and `include_unknown` must be booleans; `max_examples` must be an integer from 1 to 10. Each entry records the dictionary form, reading, observed forms, frequency, first timestamp, and up to that many distinct Japanese subtitle contexts with the existing Chinese translations. No matching words produces a valid empty glossary.
 
-Levels come from pinned, non-official JLPT reference data, never from the API. See the [dataset source, license, and limitations](ja_video_subtitles/data/README.md). JSON records subtitle hashes, settings, data version, and morphology versions. Resume reuses a glossary only if both files are valid and all metadata still matches; changes to Japanese/Chinese subtitles, settings, or data rebuild it. `--force` rebuilds every stage. Re-running with existing finished videos also needs `-y` or an affirmative overwrite response.
+Levels come from pinned, non-official JLPT reference data, never from the API. See the [dataset source, license, and limitations](ja_video_subtitles/data/README.md). JSON records subtitle hashes, settings, data version, and morphology versions. Markdown-only embeds its resume data in an HTML comment and does not create a JSON sidecar. Resume requires only the selected formats to be valid and current; changes to subtitles, learning settings, or data rebuild the glossary. A fresh structured cache can supply a newly selected format without another definitions API call. `--force` rebuilds every stage and only the selected vocabulary formats. Re-running with existing finished video or MP3 files also needs `-y`, `--force`, or an affirmative overwrite response.
 
-Set `enabled = false` to skip vocabulary and its local dependency checks. To repair an enabled setup, reinstall the pinned dependencies and, if needed, rebuild the exact bundled reference:
+Set `enabled = false` to skip vocabulary, its output directory creation, and its local dependency checks. To repair an enabled setup, reinstall the pinned dependencies and, if needed, rebuild the exact bundled reference:
 
 ```bash
 uv pip install --python .venv/bin/python --reinstall-package SudachiPy --reinstall-package SudachiDict-core -r requirements.txt
@@ -131,8 +147,8 @@ uv pip install --python .venv/bin/python --reinstall-package SudachiPy --reinsta
 
 Offline unit tests; neither the ASR model nor the DeepSeek API is needed.
 
-On a Mac with ffmpeg installed, also run the real burn checks. They generate tiny
-videos locally and use an isolated copy of the code without config or models:
+On a Mac with ffmpeg installed, also run the real burn and MP3 export checks. They use
+synthetic media in temporary directories, without user media, real API calls, or model inference:
 
 ```bash
 RUN_FFMPEG_TESTS=1 .venv/bin/python -m unittest discover -s tests
@@ -156,6 +172,7 @@ video-subtitles/
 │   ├── data/                # pinned JLPT data, attribution/license, reproducible rebuild script
 │   ├── merge.py             # ja/zh position-aligned -> bilingual.srt
 │   ├── burn.py              # ffmpeg subtitles filter: progress parsing, stderr-to-file (no deadlock), cleanup on failure/Ctrl+C
+│   ├── audio.py             # first audio stream -> MP3; atomic replacement and failure/interrupt cleanup
 │   ├── ffmpeg_util.py       # ffmpeg/ffprobe discovery (libass check), duration probe, filter path escaping
 │   └── report.py            # report-<timestamp>.md (durations/products/failures; never logs secrets)
 ├── tests/                   # offline regression tests + opt-in real ffmpeg checks
@@ -178,6 +195,8 @@ video-subtitles/
 ## Design docs
 
 See the [pipeline design](openspec/changes/archive/2026-09-01-add-video-subtitle-pipeline/design.md), [standalone burn change](openspec/changes/archive/2026-09-13-add-standalone-burn-command/proposal.md), and [vocabulary glossary change](openspec/changes/archive/2026-09-13-add-jlpt-vocabulary-glossary/proposal.md) (in Chinese).
+
+The archived [configurable vocabulary output and MP3 change](openspec/changes/archive/2026-09-14-add-configurable-vocabulary-output-and-mp3/proposal.md) documents output selection and audio export.
 
 ## License
 

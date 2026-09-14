@@ -59,6 +59,16 @@ class Config:
     learner_level: str = "N3"
     include_unknown: bool = True
     max_examples: int = 3
+    vocabulary_output_dir: str = ""
+    vocabulary_format: str = "both"
+
+
+def vocabulary_output_dir(cfg: Config, out_dir: Path) -> Path:
+    """Vocabulary paths, like CLI paths, are relative to the working directory."""
+    if not getattr(cfg, "vocabulary_enabled", True):
+        return out_dir
+    configured = getattr(cfg, "vocabulary_output_dir", "")
+    return Path(configured).expanduser() if configured else out_dir
 
 
 def load_burn(path: Path | None = None) -> BurnConfig:
@@ -114,6 +124,8 @@ def load(path: Path | None = None) -> Config:
     learner_level = vocabulary.get("learner_level", "N3")
     include_unknown = vocabulary.get("include_unknown", True)
     max_examples = vocabulary.get("max_examples", 3)
+    output_dir = vocabulary.get("output_dir", "")
+    output_format = vocabulary.get("format", "both")
     for name, value in (("enabled", enabled), ("include_unknown", include_unknown)):
         if not isinstance(value, bool):
             raise ConfigError(f"vocabulary.{name} in {path} must be a boolean")
@@ -123,6 +135,10 @@ def load(path: Path | None = None) -> Config:
     if type(max_examples) is not int or not 1 <= max_examples <= 10:
         raise ConfigError(
             f"vocabulary.max_examples in {path} must be an integer from 1 to 10")
+    if not isinstance(output_dir, str) or "\x00" in output_dir:
+        raise ConfigError(f"vocabulary.output_dir in {path} must be a path string")
+    if output_format not in ("md", "json", "both"):
+        raise ConfigError(f"vocabulary.format in {path} must be one of md/json/both")
     return Config(
         base_url=ds.get("base_url", DEFAULT_BASE_URL),
         api_key=ds.get("api_key", ""),
@@ -136,6 +152,8 @@ def load(path: Path | None = None) -> Config:
         learner_level=learner_level,
         include_unknown=include_unknown,
         max_examples=max_examples,
+        vocabulary_output_dir=output_dir,
+        vocabulary_format=output_format,
     )
 
 

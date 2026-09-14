@@ -28,6 +28,29 @@ class TestVocabularyConfig(unittest.TestCase):
             self.assertEqual(cfg.learner_level, "N3")
             self.assertIs(cfg.include_unknown, True)
             self.assertEqual(cfg.max_examples, 3)
+            self.assertEqual(cfg.vocabulary_output_dir, "")
+            self.assertEqual(cfg.vocabulary_format, "both")
+
+    def test_output_settings_and_cli_path_convention(self):
+        for fmt in ("md", "json", "both"):
+            cfg = self.write(f'[vocabulary]\noutput_dir = "words"\nformat = "{fmt}"\n')
+            self.assertEqual(cfg.vocabulary_format, fmt)
+            self.assertEqual(config.vocabulary_output_dir(cfg, Path("out")), Path("words"))
+        cfg.vocabulary_output_dir = ""
+        self.assertEqual(config.vocabulary_output_dir(cfg, Path("out")), Path("out"))
+
+    def test_invalid_output_settings(self):
+        for field, values in (("format", ('"csv"', '"MD"', '""', "true", "[]", "1")),
+                              ("output_dir", ("true", "[]", "1", '"bad\\u0000path"'))):
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    with self.assertRaisesRegex(config.ConfigError, f"vocabulary.{field}"):
+                        self.write(f"[vocabulary]\n{field} = {value}\n")
+
+    def test_disabled_output_directory_is_not_resolved(self):
+        cfg = self.write('[vocabulary]\nenabled = false\noutput_dir = "~/words"\n')
+        with mock.patch.object(Path, "expanduser", side_effect=AssertionError("resolved")):
+            self.assertEqual(config.vocabulary_output_dir(cfg, Path("out")), Path("out"))
 
     def test_explicit_settings_and_bounds(self):
         for level in ("N5", "N4", "N3", "N2", "N1"):
@@ -90,6 +113,8 @@ class TestVocabularyPreflight(unittest.TestCase):
         self.enterContext(mock.patch.object(preflight, "_check_runtime", return_value=[]))
         self.enterContext(mock.patch.object(preflight, "_check_output", return_value=[]))
         self.enterContext(mock.patch.object(preflight, "find_ffmpeg", return_value=Path("ffmpeg")))
+        self.mp3_encoder = self.enterContext(mock.patch.object(
+            preflight.audio, "has_mp3_encoder", return_value=True))
         self.enterContext(mock.patch.object(preflight, "load", return_value=self.cfg))
         self.enterContext(mock.patch.object(preflight.model_mod, "model_ready", return_value=True))
         self.client = mock.Mock()
@@ -108,6 +133,41 @@ class TestVocabularyPreflight(unittest.TestCase):
         self.assertIs(cfg, self.cfg)
         self.assertEqual(ffmpeg, Path("ffmpeg"))
         self.vocabulary.check_ready.assert_called_once_with()
+
+    def test_cli_output_options_override_config_before_directory_checks(self):
+        self.cfg.vocabulary_output_dir = "configured"
+        self.cfg.vocabulary_format = "json"
+        with mock.patch.object(preflight, "_check_output", return_value=[]) as outputs:
+            cfg, _ = preflight.run([], Path("out"), vocab_output_dir="cli-words",
+                                   vocab_format="md")
+        self.assertEqual(cfg.vocabulary_output_dir, "cli-words")
+        self.assertEqual(cfg.vocabulary_format, "md")
+        self.assertEqual(outputs.call_args_list,
+                         [mock.call([], Path("out")), mock.call([], Path("cli-words"))])
+
+    def test_disabled_vocabulary_does_not_check_custom_directory(self):
+        self.cfg.vocabulary_enabled = False
+        with mock.patch.object(preflight, "_check_output", return_value=[]) as outputs:
+            preflight.run([], Path("out"), vocab_output_dir="unwritable")
+        outputs.assert_called_once_with([], Path("out"))
+
+    def test_bad_custom_directory_fails_before_processing(self):
+        self.cfg.vocabulary_output_dir = "bad-dir"
+        with mock.patch.object(preflight, "_check_output",
+                               side_effect=[[], ["output directory bad-dir is not writable"]]):
+            with self.assertRaisesRegex(preflight.PreflightError, "bad-dir is not writable"):
+                preflight.run([], Path("out"))
+
+    def test_unresolvable_directory_is_a_preflight_error(self):
+        self.cfg.vocabulary_output_dir = "~/words"
+        with mock.patch.object(Path, "expanduser", side_effect=RuntimeError("unknown home")):
+            with self.assertRaisesRegex(preflight.PreflightError, "cannot resolve vocabulary"):
+                preflight.run([], Path("out"))
+
+    def test_missing_mp3_encoder_has_repair_guidance(self):
+        self.mp3_encoder.return_value = False
+        with self.assertRaisesRegex(preflight.PreflightError, "libmp3lame MP3 encoder"):
+            preflight.run([], Path("out"))
 
     def test_disabled_never_imports_vocabulary_dependencies(self):
         self.cfg.vocabulary_enabled = False
@@ -152,6 +212,7 @@ class TestVocabularyPreflight(unittest.TestCase):
             preflight.run_burn([], Path("out"))
         self.vocabulary.check_ready.assert_not_called()
         self.openai.OpenAI.assert_not_called()
+        self.mp3_encoder.assert_not_called()
 
     def test_connectivity_uses_non_thinking_options_for_deepseek(self):
         preflight.run([], Path("out"))

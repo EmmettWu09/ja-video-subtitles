@@ -6,9 +6,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import model as model_mod
+from . import audio, model as model_mod
 from .api_util import chat_options, safe_error
-from .config import BurnConfig, Config, api_key_valid, load, load_burn
+from .config import (BurnConfig, Config, api_key_valid, load, load_burn,
+                     vocabulary_output_dir)
 from .ffmpeg_util import find_ffmpeg, find_ffprobe
 
 REQUIRED_PACKAGES = ["faster_whisper", "openai", "srt", "tqdm", "huggingface_hub"]
@@ -19,7 +20,9 @@ class PreflightError(Exception):
     pass
 
 
-def run(videos: list[Path], out_dir: Path) -> tuple[Config, Path]:
+def run(videos: list[Path], out_dir: Path, *,
+        vocab_output_dir: str | None = None,
+        vocab_format: str | None = None) -> tuple[Config, Path]:
     """Return (config, ffmpeg path); raise PreflightError on any failure."""
     errors = _check_runtime(REQUIRED_PACKAGES)
 
@@ -28,16 +31,28 @@ def run(videos: list[Path], out_dir: Path) -> tuple[Config, Path]:
     if ffmpeg is None:
         errors.append("no ffmpeg with the subtitles filter (libass) found. "
                       "Install: brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full")
+    elif not audio.has_mp3_encoder(ffmpeg):
+        errors.append("ffmpeg has no libmp3lame MP3 encoder. "
+                      "Install: brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full")
 
     # 3. config file and api_key
     cfg: Config | None = None
     try:
         cfg = load()
+        if vocab_output_dir is not None:
+            if not vocab_output_dir or "\x00" in vocab_output_dir:
+                raise ValueError("--vocab-output-dir must be a nonempty path")
+            cfg.vocabulary_output_dir = vocab_output_dir
+        if vocab_format is not None:
+            if vocab_format not in ("md", "json", "both"):
+                raise ValueError("--vocab-format must be one of md/json/both")
+            cfg.vocabulary_format = vocab_format
         if not api_key_valid(cfg):
             errors.append("deepseek.api_key in config.toml is empty or "
                           "still the placeholder")
     except Exception as e:
         errors.append(str(e))
+        cfg = None
 
     # 4. DeepSeek API connectivity
     if cfg is not None and api_key_valid(cfg):
@@ -72,6 +87,13 @@ def run(videos: list[Path], out_dir: Path) -> tuple[Config, Path]:
                 "or set vocabulary.enabled = false.")
 
     errors.extend(_check_output(videos, out_dir))
+    if cfg is not None and cfg.vocabulary_enabled:
+        try:
+            vocab_dir = vocabulary_output_dir(cfg, out_dir)
+            if vocab_dir.resolve() != out_dir.resolve():
+                errors.extend(_check_output([], vocab_dir))
+        except (OSError, RuntimeError) as e:
+            errors.append(f"cannot resolve vocabulary output directory: {e}")
 
     if errors:
         raise PreflightError("\n".join(f"  x {e}" for e in errors))

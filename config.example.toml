@@ -15,6 +15,8 @@ model_id = "kotoba-tech/kotoba-whisper-v2.0-faster"
 
 # Companion vocabulary glossary; standalone `burn` ignores this section.
 [vocabulary]
+output_dir = ""              # Empty = -o directory; relative to the current working directory
+format = "both"              # md, json, or both; CLI --vocab-* options take precedence
 enabled = true
 # Only levels harder than this level are included: N3 -> N2 and N1.
 # JLPT assignments are non-official references from the bundled dataset.

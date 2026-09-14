@@ -1,16 +1,6 @@
-# cli Specification
+# Spec: cli
 
-## Purpose
-提供 macOS 日语视频处理命令，支持完整字幕与词汇流水线、独立字幕烧录、批量执行、启动校验、进度与结果报告。
-
-## Requirements
-
-### Requirement: 平台约束
-工具仅支持 macOS（Apple Silicon），明确不支持 Windows / Linux。预检 SHALL 检查运行平台，非 macOS 时立即报错退出，不开始任何处理。
-
-#### Scenario: 非 macOS 平台
-- **WHEN** 在 Windows 或 Linux 上执行 `ja-video-subtitles run ...`
-- **THEN** 预检失败，提示仅支持 macOS，退出码非零
+## MODIFIED Requirements
 
 ### Requirement: 命令结构
 
@@ -61,23 +51,6 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 - **WHEN** 不同输入视频主干名经规范化后相同，或计划输出路径之间冲突、可能覆盖源视频
 - **THEN** 在处理前拒绝整批请求并给出冲突路径，退出码为 2
 
-### Requirement: 模型下载子命令
-`ja-video-subtitles download` SHALL 将 ASR 模型下载到项目内缓存目录并显示下载进度，成功后写入就绪标记。`run` SHALL NOT 自动下载模型；预检发现模型未就绪时，报错提示用户先运行 `ja-video-subtitles download`，并以非零退出码退出。
-
-#### Scenario: 模型未下载
-- **WHEN** 首次使用，用户直接执行 `ja-video-subtitles run xxx.mp4 -o out` 而未执行过 `download`
-- **THEN** 预检失败，提示「请先运行 ja-video-subtitles download」，退出码非零，不开始任何处理
-
-#### Scenario: 下载成功
-- **WHEN** 用户执行 `ja-video-subtitles download`
-- **THEN** 模型下载到项目内缓存目录，终端显示进度，完成后写入就绪标记
-
-### Requirement: 进度显示
-每个处理阶段 SHALL 在终端打印实时进度条：转写按已处理音频时长、翻译按批次、烧录按已编码时长。批量处理时进度条按文件分别显示。
-
-#### Scenario: 转写进度
-- **WHEN** 正在转写 1 小时的视频
-- **THEN** 进度条随转写推进实时更新，百分比可估算剩余时间
 
 ### Requirement: 启动预检
 
@@ -118,6 +91,7 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 - **WHEN** `run` 所用 ffmpeg 缺少 MP3 编码器
 - **THEN** 预检失败并提示修复，以退出码 2 结束；独立 `burn` 不检查 MP3 编码器
 
+
 ### Requirement: 同名成片确认
 
 `run` 与 `burn` 在预检通过后、开始处理前 SHALL 统一检查每个视频的 `<stem>.sub.mp4`；`run` SHALL 同时检查 `<stem>.mp3`。任一目标存在都 SHALL 纳入该视频的覆盖确认。已存在且未指定 `-y/--yes` 时逐个提示覆盖或跳过；`run --force` 同样自动覆盖。全部确认 SHALL 在处理开始前完成，烧录过程 SHALL NOT 中断等待输入；未确认的视频 SHALL 整体跳过，保留该视频已有成片和 MP3。`burn` 不提供 `--force`。
@@ -152,14 +126,6 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 - **WHEN** `run` 指定 `-y` 或 `--force`，已有成片和/或 MP3
 - **THEN** 不再询问，处理该视频并在对应阶段成功后覆盖目标
 
-### Requirement: 运行日志
-
-`run` 与 `burn` SHALL 将终端输出同时追加到输出目录的 `run.log`，包含视频处理、错误与最终汇总。
-
-#### Scenario: 日志落盘
-
-- **WHEN** `run` 或 `burn` 全部处理完成或其中一个视频失败
-- **THEN** `run.log` 包含各视频的烧录记录、错误及汇总
 
 ### Requirement: 运行报告
 
@@ -195,6 +161,7 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 - **WHEN** 成片生成成功，但音频导出失败且旧 MP3 仍存在
 - **THEN** 报告保留成片，列音频错误及 partial 状态，不把旧 MP3 当作本次成功产物，退出码为 1
 
+
 ### Requirement: 产物复用与强制重跑
 
 输出目录中中间产物（`xxx.ja.srt`、`xxx.zh.srt`、`xxx.bilingual.srt`）已存在时，对应阶段 SHALL 默认复用合法且满足新鲜度要求的产物（不询问）；产物无法解析或为空时 SHALL 视为损坏并重跑该阶段。日文、中文字幕有效时 SHALL 保留，双语字幕仅在其 index、时间轴和内容与当前日文/中文字幕的合成结果一致时 SHALL 复用，否则重新合成。启用的词汇阶段 SHALL 仅在当前选择的词汇产物合法且源字幕、学习者设置和数据版本等元数据一致时跳过；所选文件需补齐时 MAY 使用有效结构化缓存生成对应格式，无需重新调用释义 API，未选文件不作必需条件，详见 vocabulary 规格。`--force` SHALL 强制全部阶段重跑并覆盖当前运行所选的同名产物（不再询问），SHALL NOT 删除或改写未选中的词汇格式。已确认处理的视频 SHALL 重新从源视频导出 MP3，不因旧 MP3 存在而无条件复用。独立 `burn` 只读取现有字幕，不适用此流水线复用或重生成逻辑。
@@ -213,50 +180,3 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 
 - **WHEN** `xxx.bilingual.srt` 可以解析但与当前日文/中文字幕的合成结果不同
 - **THEN** 重新合成并烧录更新后的双语字幕，不仅因缓存可解析就跳过合成
-
-### Requirement: 独立烧录多输入展开
-
-`burn` SHALL 接受一个或多个文件或目录路径，按参数顺序展开。目录 SHALL 仅枚举当前层 mp4/mov 文件，按文件名排序，忽略子目录和其他格式。SHALL 按解析后路径去重并保留首次出现顺序。任一显式指定的目录在当前层没有 mp4/mov，或最终没有有效视频时，SHALL 以退出码 2 拒绝整批请求。不同源视频的主干名不区分大小写冲突时 SHALL 拒绝整批请求。
-
-#### Scenario: 多个文件与目录混合
-
-- **WHEN** 执行 `burn a.mp4 videos/ b.mov -o out`，目录内包含 `c.mp4`、`d.mov` 和子目录
-- **THEN** 按输入位置及目录排序串行处理四个视频，不递归进入子目录
-
-#### Scenario: 重复源路径
-
-- **WHEN** 同一视频通过直接路径、目录或符号链接重复出现
-- **THEN** 解析路径去重后仅烧录一次，位置采用首次出现的顺序
-
-#### Scenario: 无匹配视频
-
-- **WHEN** 任一显式输入目录没有当前层 mp4/mov，即使其他输入包含有效视频
-- **THEN** 退出码为 2，指出无匹配视频的目录，不烧录任一视频
-
-#### Scenario: 主干名冲突
-
-- **WHEN** 输入包含不同视频 `a/clip.mp4` 与 `b/CLIP.mov`
-- **THEN** 在处理前报告同名冲突，以退出码 2 结束，不烧录任一视频
-
-### Requirement: 独立烧录批次结果
-
-`burn` SHALL 串行处理所有已确认任务。单视频烧录失败 SHALL 记录原因并继续其余视频。所有视频成功或跳过时退出码 SHALL 为 0，至少一个烧录失败时 SHALL 为 1，输入、字幕、配置或预检错误时 SHALL 为 2 且无视频开始烧录。
-
-#### Scenario: 部分视频失败
-
-- **WHEN** 第一个视频烧录失败，后面还有待处理视频
-- **THEN** 继续烧录后续视频，汇总包含失败数，最终退出码为 1
-
-#### Scenario: 全部跳过
-
-- **WHEN** 用户跳过全部已有成片
-- **THEN** 不启动 ffmpeg，汇总记录全部跳过，退出码为 0
-
-### Requirement: 词汇阶段非阻塞
-
-词汇阶段是学习辅助阶段。阶段级异常 SHALL 被记录，但不得阻止当前视频继续执行双语合成和烧录。此时视频状态 SHALL 为 `partial`，报告 SHALL 包含错误原因；批量任务 SHALL 继续处理其他视频。
-
-#### Scenario: 形态分析阶段异常
-
-- **WHEN** 日文和中文字幕已生成，但 vocabulary 阶段抛出异常
-- **THEN** 系统记录词汇失败，仍生成 bilingual.srt 和 sub.mp4，并把该视频标为 partial
