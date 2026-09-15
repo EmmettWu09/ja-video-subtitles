@@ -12,6 +12,11 @@ from .ffmpeg_util import (escape_filter_path, escape_filter_value, find_ffprobe,
 
 def burn(video: Path, bilingual_srt: Path, out_dir: Path, ffmpeg: Path,
          force_style: str, bitrate: str = "8M") -> Path:
+    """Encode hard subtitles using VideoToolbox and copy the source audio.
+
+    Write directly to the destination, overwriting it if present; failed or
+    interrupted encodes remove the partial MP4. The output directory must exist.
+    """
     ffprobe = find_ffprobe(ffmpeg)
     duration = probe_duration(ffprobe, video) if ffprobe else None
 

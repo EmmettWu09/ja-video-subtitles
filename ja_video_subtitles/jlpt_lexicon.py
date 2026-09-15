@@ -58,6 +58,8 @@ def entries_sha256(entries: list[dict]) -> str:
 
 @dataclass(frozen=True)
 class Lexicon:
+    """Validated reference metadata and indexes retaining ambiguous level evidence."""
+
     name: str
     version: str
     source_url: str
@@ -133,6 +135,8 @@ def load(path: Path | None = None) -> Lexicon:
         raise LexiconError("JLPT 数据 entries 必须为非空数组")
     if digest != entries_sha256(entries):
         raise LexiconError("JLPT 数据词条 SHA-256 不匹配")
+    # Preserve conflicting readings and levels so lookup can decline ambiguity
+    # instead of silently choosing the last entry in the source dataset.
     exact: dict[tuple[str, str], set[str]] = {}
     lemmas: dict[str, set[tuple[str, str]]] = {}
     for entry in entries:

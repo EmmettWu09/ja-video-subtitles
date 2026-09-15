@@ -20,7 +20,9 @@ PRODUCT_SUFFIXES = [".ja.srt", ".ja.json", ".zh.srt", ".bilingual.srt",
 
 @dataclass
 class StageRecord:
-    name: str            # transcribe / translate / merge / burn
+    """One attempted pipeline stage and its timing or diagnostic note."""
+
+    name: str            # transcribe / translate / vocabulary / merge / burn / audio
     status: str          # done / skipped / failed
     seconds: float = 0.0
     note: str = ""
@@ -28,6 +30,8 @@ class StageRecord:
 
 @dataclass
 class VideoRecord:
+    """Aggregate stage results, including nonfatal auxiliary-stage failures."""
+
     name: str
     stem: str
     status: str = "done"  # done / partial / failed / skipped
@@ -56,6 +60,8 @@ def _count_srt(path: Path) -> int | None:
 
 
 class Reporter:
+    """Build a local Markdown report using effective output settings and stages."""
+
     def __init__(self, out_dir: Path, *, version: str, asr_model: str,
                  translate_model: str, base_url: str, bitrate: str,
                  burn_only: bool = False, vocabulary_config: dict | None = None):
@@ -72,6 +78,7 @@ class Reporter:
         self.records: list[VideoRecord] = []
 
     def write(self) -> Path:
+        """Write the batch summary, stage results, and available selected products."""
         end = datetime.now()
         total = (end - self.start).total_seconds()
         done = [r for r in self.records if r.status == "done"]
@@ -137,10 +144,12 @@ class Reporter:
         return self.path
 
     def _product_lines(self, record: VideoRecord) -> list[str]:
+        """List selected outputs at their actual paths, excluding failed audio."""
         rows = []
         for suffix in ([".sub.mp4"] if self.burn_only else PRODUCT_SUFFIXES):
             directory = self.out_dir
             if suffix.startswith(".vocab.") and self.vocabulary_config is not None:
+                # Format switches leave old files intact; list only this selection.
                 cfg = self.vocabulary_config
                 if not cfg["enabled"]:
                     continue

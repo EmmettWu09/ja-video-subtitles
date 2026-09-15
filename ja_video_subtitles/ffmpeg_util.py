@@ -8,6 +8,7 @@ FFMPEG_FULL = Path("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg")
 
 
 def _has_subtitles_filter(ffmpeg: Path) -> bool:
+    """Recognize libass filter help; unavailable or unresponsive binaries fail."""
     try:
         r = subprocess.run(
             [str(ffmpeg), "-hide_banner", "-h", "filter=subtitles"],
@@ -32,6 +33,7 @@ def find_ffmpeg() -> Path | None:
 
 
 def find_ffprobe(ffmpeg: Path) -> Path | None:
+    """Prefer the companion ffprobe beside ffmpeg, then fall back to PATH."""
     sibling = ffmpeg.parent / "ffprobe"
     if sibling.exists():
         return sibling
@@ -40,6 +42,7 @@ def find_ffprobe(ffmpeg: Path) -> Path | None:
 
 
 def probe_duration(ffprobe: Path, media: Path) -> float:
+    """Read duration in seconds; execution, timeout and invalid-output errors propagate."""
     r = subprocess.run(
         [str(ffprobe), "-v", "error", "-show_entries", "format=duration",
          "-of", "csv=p=0", str(media)],
@@ -60,4 +63,5 @@ def escape_filter_value(value: str) -> str:
 
 
 def escape_filter_path(path: Path) -> str:
+    """Resolve the path before escaping it for an ffmpeg filter argument."""
     return escape_filter_value(str(path.resolve()))

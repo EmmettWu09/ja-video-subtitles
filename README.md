@@ -128,6 +128,8 @@ format = "both"  # md, json, or both
 
 `output_dir` must be a string; `format` must be `md`, `json`, or `both`. Override them per run with `--vocab-output-dir` and `--vocab-format`.
 
+Each option resolves independently: explicit CLI value → corresponding `config.toml` setting → built-in default. Run `./ja-video-subtitles run video.mp4 -o out` without vocabulary options to use the config. With `format = "both"` and `output_dir = ""`, both `video.vocab.md` and `video.vocab.json` go into `out`, alongside the generated `video.sub.mp4`. Passing only `--vocab-format md` keeps the configured directory; passing only the directory option keeps the configured format.
+
 `learner_level` accepts `N5` through `N1`: only harder levels are included, so N3 selects N2/N1. `include_unknown` includes ungraded content words and marks proper nouns; an ungraded word is not necessarily difficult. `enabled` and `include_unknown` must be booleans; `max_examples` must be an integer from 1 to 10. Each entry records the dictionary form, reading, observed forms, frequency, first timestamp, and up to that many distinct Japanese subtitle contexts with the existing Chinese translations. No matching words produces a valid empty glossary.
 
 Levels come from pinned, non-official JLPT reference data, never from the API. See the [dataset source, license, and limitations](ja_video_subtitles/data/README.md). JSON records subtitle hashes, settings, data version, and morphology versions. Markdown-only embeds its resume data in an HTML comment and does not create a JSON sidecar. Resume requires only the selected formats to be valid and current; changes to subtitles, learning settings, or data rebuild the glossary. A fresh structured cache can supply a newly selected format without another definitions API call. `--force` rebuilds every stage and only the selected vocabulary formats. Re-running with existing finished video or MP3 files also needs `-y`, `--force`, or an affirmative overwrite response.
@@ -197,6 +199,8 @@ video-subtitles/
 See the [pipeline design](openspec/changes/archive/2026-09-01-add-video-subtitle-pipeline/design.md), [standalone burn change](openspec/changes/archive/2026-09-13-add-standalone-burn-command/proposal.md), and [vocabulary glossary change](openspec/changes/archive/2026-09-13-add-jlpt-vocabulary-glossary/proposal.md) (in Chinese).
 
 The archived [configurable vocabulary output and MP3 change](openspec/changes/archive/2026-09-14-add-configurable-vocabulary-output-and-mp3/proposal.md) documents output selection and audio export.
+
+The [configuration fallback change](openspec/changes/archive/2026-09-15-document-vocabulary-config-fallback/proposal.md) clarifies omitted CLI options and independent overrides, with regression tests and pipeline comment review.
 
 ## License
 

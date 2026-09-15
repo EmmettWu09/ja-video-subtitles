@@ -118,6 +118,8 @@ format = "both"  # md、json 或 both
 
 `output_dir` 必须是字符串，`format` 只接受 `md`、`json`、`both`；单次运行可用 `--vocab-output-dir`、`--vocab-format` 覆盖。
 
+两个选项分别按「命令行显式参数 → `config.toml` 对应配置 → 默认值」取值。未传词汇参数时，直接执行 `./ja-video-subtitles run video.mp4 -o out` 就会使用配置文件。默认 `format = "both"` 且 `output_dir = ""`，会把 `video.vocab.md` 和 `video.vocab.json` 放到 `out`，与生成的 `video.sub.mp4` 同目录。只传 `--vocab-format md` 时，目录仍使用配置中的 `output_dir`；只传目录参数时，格式仍使用配置中的 `format`。
+
 `learner_level` 仅接受 N5/N4/N3/N2/N1，只收录严格更难的等级，因此 N3 用户得到 N2、N1。`include_unknown` 决定是否收录未分级实义词；专有名词会额外标记，未分级不代表一定较难。`enabled`、`include_unknown` 必须是布尔值，`max_examples` 必须是 1–10 的整数。词条包含基本形、读音、表层形式、出现次数、首次时间，以及最多指定条数的不同日文字幕语境和已有中文译句。没有符合条件的词时仍生成合法空词表。
 
 等级来自固定版本的本地非官方参考数据，不由 API 决定；[数据说明](ja_video_subtitles/data/README.md) 记录来源、许可证及限制。JSON 记录字幕哈希、配置、数据和形态分析版本；仅输出 Markdown 时，复用数据嵌在文件的 HTML 注释中，不生成额外 JSON。仅检查当前所选格式是否有效、新鲜，日文/中文字幕、学习者配置或数据变化会重新生成。切换格式时可利用有效结构化缓存补齐所选文件，不重复请求词义 API。`--force` 强制重跑全部阶段，词汇只重写所选格式；已有成片或 MP3 时，继续处理需 `-y`、`--force` 或在提示中选择覆盖。
@@ -151,6 +153,8 @@ RUN_FFMPEG_TESTS=1 .venv/bin/python -m unittest discover -s tests
 词汇表的 OpenSpec 变更见 [add-jlpt-vocabulary-glossary](openspec/changes/archive/2026-09-13-add-jlpt-vocabulary-glossary/proposal.md)。
 
 词汇输出与 MP3 的 OpenSpec 归档变更见 [add-configurable-vocabulary-output-and-mp3](openspec/changes/archive/2026-09-14-add-configurable-vocabulary-output-and-mp3/proposal.md)。
+
+配置回退、各参数独立覆盖及对应测试和注释核查见 [document-vocabulary-config-fallback](openspec/changes/archive/2026-09-15-document-vocabulary-config-fallback/proposal.md)。
 
 ## 预期耗时（1 小时视频，M 系芯片）
 

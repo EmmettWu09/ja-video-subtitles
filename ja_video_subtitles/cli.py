@@ -40,6 +40,7 @@ class _Tee:
 
 
 def collect_videos(path: Path) -> list[Path]:
+    """Return one supported file or sorted, nonrecursive directory contents."""
     if path.is_file():
         if path.suffix.lower() not in SUPPORTED_SUFFIXES:
             raise ValueError(f"only mp4/mov files are supported: {path}")
@@ -115,6 +116,7 @@ def check_burn_targets(videos: list[Path], subtitles: dict[Path, Path],
 
 
 def _check_targets(inputs: list[Path], pending: list[Path]) -> None:
+    """Reject nonfile targets and input/output aliases before writes begin."""
     targets: list[Path] = []
     for target in pending:
         if target.exists() and not target.is_file():
@@ -129,6 +131,7 @@ def _check_targets(inputs: list[Path], pending: list[Path]) -> None:
 
 def check_run_targets(videos: list[Path], out_dir: Path, cfg,
                       report_path: Path) -> None:
+    """Validate every selected run target, including external vocabulary files."""
     stems: set[str] = set()
     pending = [out_dir / "run.log", report_path]
     vocab_dir = vocabulary_output_dir(cfg, out_dir)
@@ -187,6 +190,11 @@ def _valid_srt(path: Path) -> bool:
 
 def process_video(video: Path, out_dir: Path, cfg, ffmpeg: Path,
                   force: bool, record: VideoRecord) -> None:
+    """Resume subtitle stages, generate selected vocabulary, burn, and export MP3.
+
+    Vocabulary and audio errors mark the record partial. Subtitle or burn
+    errors propagate to the batch runner, which continues with other videos.
+    """
     ja_srt = out_dir / f"{video.stem}.ja.srt"
     zh_srt = out_dir / f"{video.stem}.zh.srt"
     bilingual = out_dir / f"{video.stem}.bilingual.srt"
@@ -263,6 +271,7 @@ def process_video(video: Path, out_dir: Path, cfg, ffmpeg: Path,
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """Prepare a full run; return 2 for startup errors or the batch exit code."""
     src = Path(args.input)
     if not src.exists():
         print(f"input path does not exist: {src}", file=sys.stderr)
@@ -275,6 +284,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     try:
+        # Passing argparse defaults here would erase config-file preferences.
         overrides = {name: getattr(args, name) for name in
                      ("vocab_output_dir", "vocab_format")
                      if getattr(args, name, None) is not None}
@@ -306,6 +316,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_burn(args: argparse.Namespace) -> int:
+    """Validate existing subtitles and run the local burn-only batch."""
     out_dir = Path(args.output_dir).absolute()
     try:
         videos = collect_burn_videos(args.inputs)
@@ -343,6 +354,11 @@ def _run_batch(videos: list[Path], out_dir: Path, reporter: Reporter,
                process: Callable[[Path, VideoRecord], None],
                subtitle_sources: dict[Path, Path] | None = None, *,
                include_audio: bool = False) -> int:
+    """Confirm all overwrites, process videos independently, and persist results.
+
+    Return 1 if any video fails or is partial, otherwise 0. Restore terminal
+    streams even if processing/report writing is interrupted.
+    """
     def make_record(video: Path, status: str = "done") -> VideoRecord:
         return VideoRecord(
             video.name, video.stem, status=status,
@@ -394,6 +410,7 @@ def _run_batch(videos: list[Path], out_dir: Path, reporter: Reporter,
 
 
 def main() -> None:
+    """Parse CLI input and dispatch download, full run, or standalone burn."""
     ap = argparse.ArgumentParser(
         prog="ja-video-subtitles",
         description="Japanese video -> JA/ZH bilingual hard subtitles "
@@ -427,11 +444,11 @@ def main() -> None:
     p_run.add_argument("-o", "--output-dir", required=True,
                        help="directory for subtitles, sub.mp4, MP3, log, and report")
     p_run.add_argument("--vocab-output-dir", metavar="DIR",
-                       help="vocabulary directory (overrides vocabulary.output_dir; "
-                            "defaults to output-dir)")
+                       help="vocabulary directory (default: vocabulary.output_dir "
+                            "in config.toml, or output-dir alongside sub.mp4)")
     p_run.add_argument("--vocab-format", choices=("md", "json", "both"),
-                       help="vocabulary file format (overrides vocabulary.format; "
-                            "default: both)")
+                       help="vocabulary file format (default: vocabulary.format "
+                            "in config.toml, or both)")
     p_run.add_argument("--force", action="store_true",
                        help="redo every stage, ignoring existing artifacts")
     p_run.add_argument("-y", "--yes", action="store_true",

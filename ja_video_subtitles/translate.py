@@ -26,6 +26,10 @@ _NUMBERED = re.compile(r"^\s*(\d+)\s*[\.、．:：\)]\s*(.+?)\s*$")
 
 
 def make_batches(subs: list[srt.Subtitle]) -> list[list[srt.Subtitle]]:
+    """Group subtitles in order by item/character limits without splitting a cue.
+
+    A single cue longer than the character limit remains in its own batch.
+    """
     batches, cur, chars = [], [], 0
     for sub in subs:
         if cur and (len(cur) >= BATCH_MAX_ITEMS
@@ -53,6 +57,7 @@ def parse_numbered(text: str, n: int) -> dict[int, str] | None:
 
 
 def _chat(client, cfg: Config, user: str) -> str:
+    """Perform one request; callers handle API errors and empty responses."""
     resp = client.chat.completions.create(
         model=cfg.model,
         messages=[{"role": "system", "content": cfg.prompt_system},
@@ -65,6 +70,7 @@ def _chat(client, cfg: Config, user: str) -> str:
 
 def _translate_batch(client, cfg: Config, texts: list[str],
                      context: list[str]) -> list[str]:
+    """Retry a nonempty batch, then split it; retain a failed single source line."""
     lines = "\n".join(f"{i}. {t}" for i, t in enumerate(texts, 1))
     ctx = "\n".join(context) if context else "(none)"
     user = cfg.prompt_user_template.format(n=len(texts), context=ctx,
@@ -96,6 +102,7 @@ def _translate_batch(client, cfg: Config, texts: list[str],
 
 
 def translate(ja_srt: Path, out_dir: Path, client, cfg: Config) -> Path:
+    """Write Chinese SRT while retaining source cue indices and timing."""
     subs = list(srt.parse(ja_srt.read_text(encoding="utf-8")))
     batches = make_batches(subs)
     translated: list[str] = []

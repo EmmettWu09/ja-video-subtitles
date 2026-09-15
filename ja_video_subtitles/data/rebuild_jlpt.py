@@ -36,6 +36,11 @@ FILES = {
 
 
 def fetch(source_dir: Path | None) -> dict[str, bytes]:
+    """Read pinned upstream files and verify vocabulary and attribution hashes.
+
+    Offline inputs use each upstream basename in one directory; both modes must
+    provide identical bytes before conversion is allowed.
+    """
     if source_dir is None:
         url = f"https://codeload.github.com/stephenmk/yomitan-jlpt-vocab/zip/{COMMIT}"
         request = Request(url, headers={"User-Agent": "ja-video-subtitles-jlpt-rebuild"})
@@ -54,6 +59,7 @@ def fetch(source_dir: Path | None) -> dict[str, bytes]:
 
 
 def main() -> None:
+    """Write the reproducible reference and its original license and provenance."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-dir", type=Path)
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent)

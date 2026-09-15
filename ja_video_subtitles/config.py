@@ -36,17 +36,22 @@ DEFAULT_VIDEO_BITRATE = "8M"
 
 
 class ConfigError(Exception):
+    """Configuration cannot be read or contains unsupported field values."""
     pass
 
 
 @dataclass
 class BurnConfig:
+    """Local rendering settings, independent of translation and vocabulary."""
+
     force_style: str
     video_bitrate: str
 
 
 @dataclass
 class Config:
+    """Full-pipeline settings before optional per-run CLI overrides."""
+
     base_url: str
     api_key: str
     model: str
@@ -64,7 +69,11 @@ class Config:
 
 
 def vocabulary_output_dir(cfg: Config, out_dir: Path) -> Path:
-    """Vocabulary paths, like CLI paths, are relative to the working directory."""
+    """Use the configured vocabulary path or the generated video's directory.
+
+    Relative paths use the caller's cwd. Disabled vocabulary must not resolve
+    a custom path, which could itself be inaccessible or unresolvable.
+    """
     if not getattr(cfg, "vocabulary_enabled", True):
         return out_dir
     configured = getattr(cfg, "vocabulary_output_dir", "")
@@ -102,6 +111,11 @@ def load_burn(path: Path | None = None) -> BurnConfig:
 
 
 def load(path: Path | None = None) -> Config:
+    """Load project-local TOML defaults and validate vocabulary settings.
+
+    This does not apply CLI overrides or contact the API; preflight handles
+    those steps after loading. Missing vocabulary fields retain defaults.
+    """
     path = path or (PROJECT_ROOT / "config.toml")
     if not path.exists():
         raise ConfigError(
@@ -158,5 +172,6 @@ def load(path: Path | None = None) -> Config:
 
 
 def api_key_valid(cfg: Config) -> bool:
+    """Reject empty/template credentials; API connectivity is checked separately."""
     key = cfg.api_key.strip()
     return bool(key) and "在此填入" not in key and "your-api-key" not in key

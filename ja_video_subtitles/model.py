@@ -12,6 +12,10 @@ def _model_dir(model_id: str) -> Path:
 
 
 def model_ready(model_id: str) -> bool:
+    """Require the readiness marker and a model.bin in this model's cache.
+
+    This lightweight check does not validate every file or the marker's contents.
+    """
     if not MODEL_READY_MARKER.exists():
         return False
     model_dir = _model_dir(model_id)
@@ -19,6 +23,10 @@ def model_ready(model_id: str) -> bool:
 
 
 def download(model_id: str) -> None:
+    """Download the model snapshot and mark readiness after finding model.bin.
+
+    Download errors propagate; a snapshot missing model.bin exits with status 1.
+    """
     from huggingface_hub import snapshot_download
 
     print(f"[download] downloading ASR model {model_id} -> {CACHE_DIR} "

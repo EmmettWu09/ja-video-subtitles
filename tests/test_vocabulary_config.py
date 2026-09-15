@@ -111,7 +111,8 @@ class TestVocabularyPreflight(unittest.TestCase):
             config.DEFAULT_BASE_URL, "test-key", config.DEFAULT_MODEL,
             "test-model", "", "", "", "8M")
         self.enterContext(mock.patch.object(preflight, "_check_runtime", return_value=[]))
-        self.enterContext(mock.patch.object(preflight, "_check_output", return_value=[]))
+        self.outputs = self.enterContext(mock.patch.object(
+            preflight, "_check_output", return_value=[]))
         self.enterContext(mock.patch.object(preflight, "find_ffmpeg", return_value=Path("ffmpeg")))
         self.mp3_encoder = self.enterContext(mock.patch.object(
             preflight.audio, "has_mp3_encoder", return_value=True))
@@ -128,11 +129,55 @@ class TestVocabularyPreflight(unittest.TestCase):
         self.enterContext(mock.patch.dict(
             "sys.modules", {"ja_video_subtitles.vocabulary": self.vocabulary}))
 
+    def use_config_file(self, vocabulary_settings):
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        path = Path(directory) / "config.toml"
+        path.write_text('[deepseek]\napi_key = "test-key"\n'
+                        '[vocabulary]\n' + vocabulary_settings, encoding="utf-8")
+        self.enterContext(mock.patch.object(
+            preflight, "load", side_effect=lambda: config.load(path)))
+
     def test_enabled_checks_local_tokenizer_and_lexicon_once(self):
         cfg, ffmpeg = preflight.run([], Path("out"))
         self.assertIs(cfg, self.cfg)
         self.assertEqual(ffmpeg, Path("ffmpeg"))
         self.vocabulary.check_ready.assert_called_once_with()
+
+    def test_omitted_cli_output_options_use_config_file(self):
+        self.use_config_file('output_dir = "configured-words"\nformat = "json"\n')
+        cfg, _ = preflight.run([], Path("out"))
+        self.assertEqual(cfg.vocabulary_format, "json")
+        self.assertEqual(config.vocabulary_output_dir(cfg, Path("out")),
+                         Path("configured-words"))
+        self.assertEqual(self.outputs.call_args_list,
+                         [mock.call([], Path("out")),
+                          mock.call([], Path("configured-words"))])
+
+    def test_cli_format_override_keeps_config_file_output_directory(self):
+        self.use_config_file('output_dir = "configured-words"\nformat = "json"\n')
+        cfg, _ = preflight.run([], Path("out"), vocab_format="md")
+        self.assertEqual(cfg.vocabulary_format, "md")
+        self.assertEqual(config.vocabulary_output_dir(cfg, Path("out")),
+                         Path("configured-words"))
+        self.outputs.assert_has_calls([mock.call([], Path("out")),
+                                       mock.call([], Path("configured-words"))])
+
+    def test_cli_directory_override_keeps_config_file_format(self):
+        self.use_config_file('output_dir = "configured-words"\nformat = "json"\n')
+        cfg, _ = preflight.run([], Path("out"), vocab_output_dir="cli-words")
+        self.assertEqual(cfg.vocabulary_format, "json")
+        self.assertEqual(config.vocabulary_output_dir(cfg, Path("out")),
+                         Path("cli-words"))
+        self.assertEqual(self.outputs.call_args_list,
+                         [mock.call([], Path("out")), mock.call([], Path("cli-words"))])
+
+    def test_missing_config_output_keys_default_to_both_in_video_output_directory(self):
+        self.use_config_file('learner_level = "N2"\n')
+        cfg, _ = preflight.run([], Path("custom-video-output"))
+        self.assertEqual(cfg.vocabulary_format, "both")
+        self.assertEqual(config.vocabulary_output_dir(cfg, Path("custom-video-output")),
+                         Path("custom-video-output"))
+        self.outputs.assert_called_once_with([], Path("custom-video-output"))
 
     def test_cli_output_options_override_config_before_directory_checks(self):
         self.cfg.vocabulary_output_dir = "configured"

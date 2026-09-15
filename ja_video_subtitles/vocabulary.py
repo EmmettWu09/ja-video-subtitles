@@ -48,6 +48,8 @@ POS_ZH = {"名詞": "名词", "動詞": "动词", "形容詞": "形容词",
 
 @dataclass
 class VocabularyResult:
+    """Generation summary; paths are absent for formats the caller did not select."""
+
     status: str
     counts: dict[str, int]
     degraded_count: int
@@ -73,6 +75,7 @@ def _load_tokenizer():
 
 
 def check_ready() -> None:
+    """Verify the local tokenizer and pinned lexicon without calling the API."""
     analyzer, mode = _load_tokenizer()
     try:
         list(analyzer.tokenize("語彙を確認する。", mode))
@@ -143,6 +146,11 @@ def _base_reading(token, lemma: str, analyzer, mode, cache: dict) -> str:
 
 
 def _extract(ja: list[srt.Subtitle], zh: list[srt.Subtitle], cfg, lexicon) -> list[dict]:
+    """Select harder or ungraded lemmas locally, grouped by spelling and reading.
+
+    Subtitle indices align translations; chronological traversal retains the
+    earliest occurrences and bounded examples for each distinct word.
+    """
     analyzer, mode = _load_tokenizer()
     translations = {sub.index: sub.content for sub in zh}
     known: dict[tuple[str, str], dict] = {}
@@ -208,6 +216,7 @@ def _entry_sort_key(entry: dict):
 
 
 def _parse_glosses(text: str, expected: set[str]) -> dict[str, tuple[str, str]] | None:
+    """Accept a complete, duplicate-free set of glosses for the requested IDs."""
     try:
         data = json.loads(text)
     except (TypeError, ValueError):
@@ -254,6 +263,11 @@ def _chat(client, cfg, entries: list[dict]) -> str:
 
 
 def _gloss_batch(client, cfg, entries: list[dict]) -> None:
+    """Fill glosses in place, bisecting failed batches to isolate missing words.
+
+    Exhausted single-word requests retain the local entry with a warning so an
+    unavailable gloss never discards the word or its subtitle evidence.
+    """
     expected = {entry["id"] for entry in entries}
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -280,6 +294,7 @@ def _gloss_batch(client, cfg, entries: list[dict]) -> None:
 
 
 def _settings(cfg, lexicon) -> dict:
+    """Capture extraction inputs for cache freshness, independent of output format."""
     versions = {}
     for name in ("SudachiPy", "SudachiDict-core"):
         try:
@@ -380,6 +395,7 @@ def _markdown_inline(text: str) -> str:
 
 
 def render_markdown(data: dict) -> str:
+    """Render the readable vocabulary document without a standalone cache payload."""
     settings, dataset = data["settings"], data["dataset"]
     lines = ["# 日语词汇表", "", f"学习者等级：{settings['learner_level']}", "",
              f"JLPT 数据：{_markdown_inline(dataset['name'])}@{_markdown_inline(dataset['version'])}",
@@ -427,6 +443,11 @@ def _standalone_markdown(data: dict) -> str:
 
 def _read_fresh_document(path: Path, source: dict, settings: dict, dataset: dict,
                          *, markdown: bool = False) -> dict | None:
+    """Return only a valid cache matching current subtitles, settings and dataset.
+
+    Standalone Markdown must also match its embedded document exactly; edited,
+    malformed or missing artifacts are treated as cache misses.
+    """
     try:
         content = path.read_text(encoding="utf-8")
         if markdown:
@@ -461,6 +482,11 @@ def _selected_artifacts_match(json_path: Path | None, markdown_path: Path | None
 
 
 def _write_artifacts(json_path: Path | None, markdown_path: Path | None, data: dict) -> None:
+    """Validate first, then atomically replace each selected artifact separately.
+
+    Caller-created parent directories hold the temporary files so replacements
+    stay on the same filesystem. Unselected artifacts are left untouched.
+    """
     if not _valid_document(data):
         raise ValueError("Vocabulary generated an invalid document; no artifacts were written.")
     artifacts = []
@@ -502,6 +528,12 @@ def _result(data: dict, status: str, json_path: Path | None,
 
 def generate(ja_srt: Path, zh_srt: Path, out_dir: Path, cfg,
              client=None, force: bool = False) -> VocabularyResult:
+    """Generate selected formats in the caller-resolved vocabulary directory.
+
+    A fresh document can supply another format without repeating API requests.
+    ``force`` bypasses that reuse. Only clients created here are closed here;
+    failed glosses are represented by warnings in otherwise complete artifacts.
+    """
     output_format = getattr(cfg, "vocabulary_format", "both")
     if output_format not in ("md", "json", "both"):
         raise ValueError("Vocabulary format must be md, json, or both.")

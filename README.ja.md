@@ -115,6 +115,8 @@ format = "both"  # md、json、both
 
 `output_dir` は文字列、`format` は `md`、`json`、`both` のいずれかです。実行ごとに `--vocab-output-dir` と `--vocab-format` で上書きできます。
 
+各項目は個別に「明示した CLI 引数 → `config.toml` の対応設定 → 既定値」の順で決まります。語彙オプションなしの `./ja-video-subtitles run video.mp4 -o out` は設定ファイルを使用します。既定の `format = "both"`、`output_dir = ""` では、`video.vocab.md` と `video.vocab.json` を生成済み `video.sub.mp4` と同じ `out` に出力します。`--vocab-format md` だけを指定した場合は設定のディレクトリを、ディレクトリだけを指定した場合は設定の形式を引き続き使用します。
+
 `learner_level` は N5/N4/N3/N2/N1 のいずれかです。指定レベルより難しい語だけを選ぶため、N3 なら N2/N1 が対象です。`include_unknown` は未分類の内容語を含めるかを指定し、固有名詞には別途印を付けます。未分類だから難語とは限りません。`enabled` と `include_unknown` は真偽値、`max_examples` は 1〜10 の整数です。各語には基本形、読み、出現形、回数、初出時刻、指定件数までの異なる日本語字幕と既存の中国語訳を記録します。対象語がなくても有効な空の語彙表を生成します。
 
 レベル判定には固定版の非公式ローカル資料を使い、API はレベルを決定しません。[データ説明](ja_video_subtitles/data/README.md) に出典、ライセンス、制約を記載しています。JSON には字幕のハッシュ、設定、データ版、形態素解析の版を記録します。Markdown のみの場合は HTML コメントに再利用用データを埋め込み、追加の JSON は作成しません。選択した形式だけの正常性・鮮度を確認し、字幕、学習設定、データが変われば再生成します。形式の切り替えでは有効な構造化キャッシュから必要な形式を作成でき、語義 API を再度呼び出す必要はありません。`--force` は全工程をやり直し、語彙は選択形式だけを書き換えます。既存の完成動画または MP3 がある場合、`-y`、`--force`、または確認時の上書き選択が必要です。
@@ -144,6 +146,8 @@ RUN_FFMPEG_TESTS=1 .venv/bin/python -m unittest discover -s tests
 語彙表の OpenSpec は [add-jlpt-vocabulary-glossary](openspec/changes/archive/2026-09-13-add-jlpt-vocabulary-glossary/proposal.md) を参照してください。
 
 語彙出力と MP3 のアーカイブ済み OpenSpec は [add-configurable-vocabulary-output-and-mp3](openspec/changes/archive/2026-09-14-add-configurable-vocabulary-output-and-mp3/proposal.md) を参照してください。
+
+設定のフォールバック、項目ごとの上書き、回帰テストとコメントの確認は [document-vocabulary-config-fallback](openspec/changes/archive/2026-09-15-document-vocabulary-config-fallback/proposal.md) を参照してください。
 
 ## 処理時間の目安（1時間の動画、M シリーズ）
 

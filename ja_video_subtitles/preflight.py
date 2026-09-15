@@ -17,13 +17,18 @@ BURN_REQUIRED_PACKAGES = ["srt", "tqdm"]
 
 
 class PreflightError(Exception):
+    """Collected startup failures that prevent any video processing."""
     pass
 
 
 def run(videos: list[Path], out_dir: Path, *,
         vocab_output_dir: str | None = None,
         vocab_format: str | None = None) -> tuple[Config, Path]:
-    """Return (config, ffmpeg path); raise PreflightError on any failure."""
+    """Resolve run settings and return (config, ffmpeg) after startup checks.
+
+    Omitted CLI values are None, so each option keeps its config/default value
+    independently. Failures are collected into one PreflightError.
+    """
     errors = _check_runtime(REQUIRED_PACKAGES)
 
     # 2. ffmpeg with the subtitles filter (libass)
@@ -39,6 +44,7 @@ def run(videos: list[Path], out_dir: Path, *,
     cfg: Config | None = None
     try:
         cfg = load()
+        # Apply only explicitly supplied CLI values, before destination checks.
         if vocab_output_dir is not None:
             if not vocab_output_dir or "\x00" in vocab_output_dir:
                 raise ValueError("--vocab-output-dir must be a nonempty path")
@@ -124,6 +130,7 @@ def run_burn(videos: list[Path], out_dir: Path) -> tuple[BurnConfig, Path]:
 
 
 def _check_runtime(packages: list[str]) -> list[str]:
+    """Collect platform, Python-version, and required-import failures."""
     errors: list[str] = []
     if sys.platform != "darwin":
         errors.append("macOS only: burning relies on VideoToolbox hardware "
@@ -140,6 +147,11 @@ def _check_runtime(packages: list[str]) -> list[str]:
 
 
 def _check_output(videos: list[Path], out_dir: Path) -> list[str]:
+    """Check capacity and create/probe a destination without replacing files.
+
+    A separate vocabulary directory passes no videos: it needs a write probe,
+    while the media destination carries the input-based disk-space estimate.
+    """
     errors: list[str] = []
     # Free disk space >= 2x total input size. Walk up to an existing ancestor.
     try:

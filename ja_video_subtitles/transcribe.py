@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 def _is_hallucination(text: str, avg_logprob: float, no_speech_prob: float,
                       prev_text: str) -> bool:
+    """Flag low-confidence silence or repetition of the last accepted segment."""
     if no_speech_prob > 0.6 and avg_logprob < -0.8:
         return True
     if text and text == prev_text:
@@ -69,7 +70,11 @@ def _get_model(model_id: str):
 
 
 def transcribe(media: Path, out_dir: Path, model_id: str) -> tuple[Path, int]:
-    """Return (ja_srt_path, dropped_hallucination_count)."""
+    """Write Japanese SRT and recognition diagnostics into an existing directory.
+
+    Use a locally cached model and return the SRT path plus the number of
+    rejected segments. The adjacent JSON contains ASR diagnostics, not vocab.
+    """
     model = _get_model(model_id)
     segments, info = model.transcribe(
         str(media),

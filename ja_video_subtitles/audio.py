@@ -23,7 +23,11 @@ def has_mp3_encoder(ffmpeg: Path) -> bool:
 
 
 def export(video: Path, out_dir: Path, ffmpeg: Path) -> Path:
-    """Write an audio-only MP3, replacing an existing output only on success."""
+    """Export the first audio stream as stereo 192 kbps MP3 into out_dir.
+
+    Create the directory if needed and replace an existing output only on
+    success. Missing audio or encoder failures raise without removing it.
+    """
     ffprobe = find_ffprobe(ffmpeg)
     duration = None
     if ffprobe:
