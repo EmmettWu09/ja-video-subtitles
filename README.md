@@ -51,7 +51,7 @@ cp config.example.toml config.toml   # then fill in deepseek.api_key
 
 The model lands in the project-local `.cache/hf/` (`HF_HOME` is pinned there) with a `.model-ready` marker. Download defaults to the `hf-mirror.com` mirror; override with `HF_ENDPOINT=https://huggingface.co`.
 
-For `burn` only, install Python, `srt`, `tqdm`, and ffmpeg; you can skip copying the config, adding an API key, and downloading the ASR model or vocabulary dictionaries. If `config.toml` exists, only its subtitle style and video bitrate settings apply; otherwise the defaults are used. `burn` ignores vocabulary settings and does not import the tokenizer or load JLPT data.
+For `burn` only, install Python, `srt`, `tqdm`, and ffmpeg; you can skip copying the config, adding an API key, and downloading the ASR model or vocabulary dictionaries. If `config.toml` exists, only its `[burn]`, subtitle style, and video bitrate settings apply; otherwise the defaults are used. `burn` ignores vocabulary settings and does not import the tokenizer or load JLPT data.
 
 ## Usage
 
@@ -71,6 +71,40 @@ For `burn` only, install Python, `srt`, `tqdm`, and ffmpeg; you can skip copying
 ```
 
 These write the selected `xxx.vocab.md` and/or `xxx.vocab.json` into `words`. `media` still receives subtitles, `xxx.sub.mp4`, and `xxx.mp3`. The defaults are both vocabulary formats in `-o`. CLI options override the corresponding vocabulary config values; relative paths use your current working directory. Switching formats leaves old unselected files untouched and excludes them from the current report. These options do not enable vocabulary when `enabled = false`.
+
+### Save options in config.toml
+
+Every business option resolves independently: explicit CLI value → `config.toml` → built-in default. Relative paths from either source resolve against your current working directory; a leading `~` expands to your home directory.
+
+| Command | CLI option | Config key | Without CLI or config |
+|---|---|---|---|
+| `run` | positional input | `run.input` | required after merging |
+| `run` | `-o/--output-dir` | `run.output_dir` | required after merging |
+| `run` | `--force` / `--no-force` | `run.force` | `false` |
+| `run` | `-y/--yes` / `--no-yes` | `run.yes` | `false` |
+| `run` | `--vocab-output-dir` | `vocabulary.output_dir` | the effective output directory |
+| `run` | `--vocab-format` | `vocabulary.format` | `both` |
+| `burn` | positional inputs | `burn.inputs` | required after merging |
+| `burn` | `-o/--output-dir` | `burn.output_dir` | required after merging |
+| `burn` | `-s/--subtitles` | `burn.subtitles` | no explicit subtitle file |
+| `burn` | `--subtitle-dir` | `burn.subtitle_dir` | match in the effective output directory |
+| `burn` | `-y/--yes` / `--no-yes` | `burn.yes` | `false` |
+
+With these settings in place, the bare commands work:
+
+```toml
+[run]
+input = "videos"
+output_dir = "out"
+```
+
+```bash
+./ja-video-subtitles run                 # input/output from config.toml
+./ja-video-subtitles run -o temporary    # only the output dir from the CLI
+./ja-video-subtitles burn                # burn.inputs / burn.output_dir / ...
+```
+
+A CLI input list replaces `burn.inputs` wholesale instead of appending to it, and one CLI subtitle source (`-s` or `--subtitle-dir`) replaces both configured sources; `burn.subtitles` and `burn.subtitle_dir` are mutually exclusive in the config. Setting `force`/`yes` to `true` behaves exactly like `--force`/`-y`, so configured switches make even bare commands rerun stages or overwrite outputs; `--no-force`/`--no-yes` turn them off for one invocation, and giving both forms of one switch is an error. Invalid configured values are reported even when the CLI provides a valid value for the same option, and a valid but overridden config path is never probed or created.
 
 ### Burn existing subtitles
 

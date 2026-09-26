@@ -49,7 +49,7 @@ cp config.example.toml config.toml   # deepseek.api_key を記入
 
 モデルはプロジェクト内 `.cache/hf/` に保存され（`HF_HOME` で固定）、成功時に `.model-ready` マーカーが書かれます。ダウンロードは既定で `hf-mirror.com` ミラーを使用。`HF_ENDPOINT=https://huggingface.co` で変更可能です。
 
-`burn` のみ使う場合は Python、`srt`、`tqdm`、ffmpeg があれば利用でき、設定ファイル・API キー・ASR モデル・語彙辞書は不要です。`config.toml` があれば字幕スタイルと動画ビットレートだけを読み込み、なければ既定値を使います。語彙設定は無視し、形態素解析器や JLPT データを読み込みません。
+`burn` のみ使う場合は Python、`srt`、`tqdm`、ffmpeg があれば利用でき、設定ファイル・API キー・ASR モデル・語彙辞書は不要です。`config.toml` があれば `[burn]`・字幕スタイル・動画ビットレートだけを読み込み、なければ既定値を使います。語彙設定は無視し、形態素解析器や JLPT データを読み込みません。
 
 ## 使い方
 
@@ -69,6 +69,40 @@ cp config.example.toml config.toml   # deepseek.api_key を記入
 ```
 
 選択した `xxx.vocab.md` と/または `xxx.vocab.json` は `words` に、字幕、`xxx.sub.mp4`、`xxx.mp3` は `media` に出力します。既定では両方の語彙形式を `-o` に保存します。CLI オプションは対応する設定値より優先され、相対パスはコマンド実行時のディレクトリ基準です。形式を切り替えても未選択の既存ファイルは残りますが、今回のレポートには含めません。`enabled = false` の場合、これらのオプションで語彙機能は有効になりません。
+
+### よく使うオプションを config.toml に保存
+
+すべての業務オプションは項目ごとに「明示した CLI 引数 → `config.toml` の対応設定 → 既定値」の順で決まります。どちらの来源の相対パスもコマンド実行時のディレクトリ基準で、先頭の `~` はホームディレクトリに展開されます。
+
+| コマンド | CLI オプション | 設定キー | どちらも無い場合 |
+|---|---|---|---|
+| `run` | 位置引数 input | `run.input` | マージ後に必須 |
+| `run` | `-o/--output-dir` | `run.output_dir` | マージ後に必須 |
+| `run` | `--force` / `--no-force` | `run.force` | `false` |
+| `run` | `-y/--yes` / `--no-yes` | `run.yes` | `false` |
+| `run` | `--vocab-output-dir` | `vocabulary.output_dir` | 有効な出力ディレクトリに追随 |
+| `run` | `--vocab-format` | `vocabulary.format` | `both` |
+| `burn` | 位置引数 inputs | `burn.inputs` | マージ後に必須 |
+| `burn` | `-o/--output-dir` | `burn.output_dir` | マージ後に必須 |
+| `burn` | `-s/--subtitles` | `burn.subtitles` | 明示する字幕ファイルなし |
+| `burn` | `--subtitle-dir` | `burn.subtitle_dir` | 有効な出力ディレクトリで照合 |
+| `burn` | `-y/--yes` / `--no-yes` | `burn.yes` | `false` |
+
+設定しておけば、裸のコマンドで実行できます：
+
+```toml
+[run]
+input = "videos"
+output_dir = "out"
+```
+
+```bash
+./ja-video-subtitles run                 # 入力・出力は config.toml から
+./ja-video-subtitles run -o temporary    # 出力先だけ CLI で上書き
+./ja-video-subtitles burn                # burn.inputs / burn.output_dir / ...
+```
+
+CLI の入力リストは `burn.inputs` を（追加ではなく）全体で置き換えます。CLI の字幕来源（`-s` または `--subtitle-dir`）は設定の 2 つの来源をまとめて置き換え、設定内の `burn.subtitles` と `burn.subtitle_dir` は同時に指定できません。設定で `force`/`yes` を `true` にすると `--force`/`-y` と同じ動作になるため、裸のコマンドでも再実行・自動上書きが行われます。`--no-force`/`--no-yes` でその回だけ無効化でき、同一スイッチの肯定・否定の同時指定はエラーです。設定値が不正な場合は CLI に同項目の有効な値があってもエラーになり、有効でも CLI に置き換えられた設定パスは確認・作成されません。
 
 ### 既存字幕の焼き付けのみ
 

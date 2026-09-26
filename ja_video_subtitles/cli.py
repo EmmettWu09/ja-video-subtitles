@@ -15,12 +15,30 @@ from . import burn as burn_mod
 from . import merge as merge_mod
 from . import preflight, transcribe as transcribe_mod
 from . import translate as translate_mod
-from .config import load, vocabulary_output_dir
+from .config import ConfigError, load, load_burn, vocabulary_output_dir
 from .api_util import safe_error
 from .model import download
 from .report import Reporter, StageRecord, VideoRecord
 
 SUPPORTED_SUFFIXES = {".mp4", ".mov"}
+
+
+def _path_arg(value: str) -> str:
+    """argparse type: an explicit path must be nonempty, not blank, NUL-free."""
+    if not value.strip() or "\x00" in value:
+        raise argparse.ArgumentTypeError("expected a nonempty path")
+    return value
+
+
+def _required_option(cli_value: str | None, config_value: str | None,
+                     cli_name: str, config_key: str) -> str:
+    """CLI wins over config; merged required options have no hidden default."""
+    if cli_value is not None:
+        return cli_value
+    if config_value is not None:
+        return config_value
+    raise ValueError(f"missing {cli_name}; pass it on the command line or set "
+                     f"{config_key} in config.toml")
 
 
 class _Tee:
@@ -58,7 +76,7 @@ def collect_burn_videos(inputs: list[str]) -> list[Path]:
     """Expand inputs in order, deduplicate paths, and reject output collisions."""
     videos, seen, stems = [], set(), {}
     for raw in inputs:
-        for video in collect_videos(Path(raw)):
+        for video in collect_videos(Path(raw).expanduser()):
             resolved = video.resolve()
             if resolved in seen:
                 continue
@@ -82,12 +100,12 @@ def burn_subtitles(videos: list[Path], out_dir: Path,
     if subtitles and len(videos) != 1:
         raise ValueError("--subtitles requires exactly one video; "
                          "use --subtitle-dir for multiple videos")
-    directory = Path(subtitle_dir) if subtitle_dir else out_dir
+    directory = Path(subtitle_dir).expanduser() if subtitle_dir else out_dir
     if subtitle_dir and not directory.is_dir():
         raise ValueError(f"subtitle directory does not exist: {directory}")
     result, errors = {}, []
     for video in videos:
-        path = (Path(subtitles) if subtitles else
+        path = (Path(subtitles).expanduser() if subtitles else
                 directory / f"{video.stem}.bilingual.srt").absolute()
         try:
             if path.suffix.lower() != ".srt":
@@ -272,11 +290,32 @@ def process_video(video: Path, out_dir: Path, cfg, ffmpeg: Path,
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Prepare a full run; return 2 for startup errors or the batch exit code."""
-    src = Path(args.input)
+    try:
+        cfg = load()
+    except ConfigError as e:
+        print(f"Configuration error: {safe_error(e)}", file=sys.stderr)
+        return 2
+    try:
+        input_raw = _required_option(args.input, cfg.run_input,
+                                     "input", "run.input")
+        output_raw = _required_option(args.output_dir, cfg.run_output_dir,
+                                      "-o/--output-dir", "run.output_dir")
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+    # Apply only explicitly supplied CLI values, before destination checks.
+    if args.vocab_output_dir is not None:
+        cfg.vocabulary_output_dir = args.vocab_output_dir
+    if args.vocab_format is not None:
+        cfg.vocabulary_format = args.vocab_format
+    force = args.force if args.force is not None else cfg.run_force
+    yes = args.yes if args.yes is not None else cfg.run_yes
+
+    src = Path(input_raw).expanduser()
     if not src.exists():
         print(f"input path does not exist: {src}", file=sys.stderr)
         return 2
-    out_dir = Path(args.output_dir)
+    out_dir = Path(output_raw).expanduser()
     try:
         videos = collect_videos(src)
     except (ValueError, OSError) as e:
@@ -284,11 +323,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        # Passing argparse defaults here would erase config-file preferences.
-        overrides = {name: getattr(args, name) for name in
-                     ("vocab_output_dir", "vocab_format")
-                     if getattr(args, name, None) is not None}
-        cfg, ffmpeg = preflight.run(videos, out_dir, **overrides)
+        cfg, ffmpeg = preflight.run(videos, out_dir, cfg)
     except preflight.PreflightError as e:
         print(f"Preflight checks failed:\n{safe_error(e)}", file=sys.stderr)
         return 2
@@ -309,27 +344,52 @@ def cmd_run(args: argparse.Namespace) -> int:
     except (ValueError, OSError) as e:
         print(f"Output checks failed:\n{safe_error(e)}", file=sys.stderr)
         return 2
-    return _run_batch(videos, out_dir, reporter, args.yes or args.force,
+    return _run_batch(videos, out_dir, reporter, yes or force,
                       lambda video, record: process_video(
-                          video, out_dir, cfg, ffmpeg, args.force, record),
+                          video, out_dir, cfg, ffmpeg, force, record),
                       include_audio=True)
 
 
 def cmd_burn(args: argparse.Namespace) -> int:
     """Validate existing subtitles and run the local burn-only batch."""
-    out_dir = Path(args.output_dir).absolute()
     try:
-        videos = collect_burn_videos(args.inputs)
-        subtitles = burn_subtitles(videos, out_dir, args.subtitles,
-                                   args.subtitle_dir)
-        check_burn_targets(videos, subtitles, out_dir)
-        cfg, ffmpeg = preflight.run_burn(videos, out_dir)
+        cfg = load_burn()
+    except ConfigError as e:
+        print(f"Configuration error: {safe_error(e)}", file=sys.stderr)
+        return 2
+    try:
+        inputs = args.inputs or cfg.inputs
+        if not inputs:
+            raise ValueError("missing inputs; pass mp4/mov files or folders on "
+                             "the command line or set burn.inputs in config.toml")
+        output_raw = _required_option(args.output_dir, cfg.output_dir,
+                                      "-o/--output-dir", "burn.output_dir")
+        if args.subtitles is not None or args.subtitle_dir is not None:
+            # An explicit CLI source replaces the whole configured source group.
+            subtitles, subtitle_dir = args.subtitles, args.subtitle_dir
+        else:
+            if cfg.subtitles and cfg.subtitle_dir:
+                raise ValueError("burn.subtitles and burn.subtitle_dir in "
+                                 "config.toml are mutually exclusive; set only "
+                                 "one or pass -s/--subtitles or --subtitle-dir")
+            subtitles = cfg.subtitles or None
+            subtitle_dir = cfg.subtitle_dir or None
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+    yes = args.yes if args.yes is not None else cfg.yes
+    out_dir = Path(output_raw).expanduser().absolute()
+    try:
+        videos = collect_burn_videos(inputs)
+        subtitle_map = burn_subtitles(videos, out_dir, subtitles, subtitle_dir)
+        check_burn_targets(videos, subtitle_map, out_dir)
+        cfg, ffmpeg = preflight.run_burn(videos, out_dir, cfg)
     except (ValueError, OSError, preflight.PreflightError) as e:
         print(f"Burn checks failed:\n{e}", file=sys.stderr)
         return 2
 
     def process(video: Path, record: VideoRecord) -> None:
-        subtitle = subtitles[video]
+        subtitle = subtitle_map[video]
         print(f"[burn] subtitles: {subtitle}")
         t0 = time.monotonic()
         burn_mod.burn(video, subtitle, out_dir, ffmpeg, cfg.force_style,
@@ -342,11 +402,11 @@ def cmd_burn(args: argparse.Namespace) -> int:
                         translate_model="N/A (burn only)", base_url="N/A",
                         bitrate=cfg.video_bitrate, burn_only=True)
     try:
-        check_burn_targets(videos, subtitles, out_dir, reporter.path)
+        check_burn_targets(videos, subtitle_map, out_dir, reporter.path)
     except (ValueError, OSError) as e:
         print(f"Burn checks failed:\n{e}", file=sys.stderr)
         return 2
-    return _run_batch(videos, out_dir, reporter, args.yes, process, subtitles)
+    return _run_batch(videos, out_dir, reporter, yes, process, subtitle_map)
 
 
 def _run_batch(videos: list[Path], out_dir: Path, reporter: Reporter,
@@ -433,56 +493,88 @@ def main() -> None:
         "run", help="process videos",
         description="Transcribe -> translate -> vocabulary -> bilingual merge -> burn. "
                     "Export MP3 audio alongside the subtitled video. "
-                    "Vocabulary output location and format are configurable.",
+                    "Explicit CLI options override config.toml, which overrides "
+                    "built-in defaults; vocabulary output location and format "
+                    "are configurable.",
         epilog="examples:\n"
                "  ja-video-subtitles run video.mp4 -o out\n"
                "  ja-video-subtitles run ./videos -o out -y   # batch, auto-overwrite\n"
                "  ja-video-subtitles run video.mp4 -o out --vocab-output-dir words --vocab-format md\n"
-               "  ja-video-subtitles run video.mov -o out --force   # redo all stages",
+               "  ja-video-subtitles run video.mov -o out --force   # redo all stages\n"
+               "  ja-video-subtitles run   # input/output from [run] in config.toml\n"
+               "  ja-video-subtitles run -o out   # only the output dir from the CLI\n"
+               "  ja-video-subtitles run --no-force --no-yes   # disable configured switches",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p_run.add_argument("input", help="an mp4/mov file or a folder of them")
-    p_run.add_argument("-o", "--output-dir", required=True,
-                       help="directory for subtitles, sub.mp4, MP3, log, and report")
-    p_run.add_argument("--vocab-output-dir", metavar="DIR",
+    p_run.add_argument("input", nargs="?", type=_path_arg,
+                       help="an mp4/mov file or a folder of them "
+                            "(default: run.input in config.toml)")
+    p_run.add_argument("-o", "--output-dir", type=_path_arg,
+                       help="directory for subtitles, sub.mp4, MP3, log, and "
+                            "report (default: run.output_dir in config.toml)")
+    p_run.add_argument("--vocab-output-dir", metavar="DIR", type=_path_arg,
                        help="vocabulary directory (default: vocabulary.output_dir "
                             "in config.toml, or output-dir alongside sub.mp4)")
     p_run.add_argument("--vocab-format", choices=("md", "json", "both"),
                        help="vocabulary file format (default: vocabulary.format "
                             "in config.toml, or both)")
-    p_run.add_argument("--force", action="store_true",
-                       help="redo every stage, ignoring existing artifacts")
-    p_run.add_argument("-y", "--yes", action="store_true",
-                       help="overwrite existing outputs without asking")
+    force_group = p_run.add_mutually_exclusive_group()
+    force_group.add_argument("--force", action="store_true", default=None,
+                             help="redo every stage, ignoring existing artifacts "
+                                  "(default: run.force in config.toml, or false)")
+    force_group.add_argument("--no-force", action="store_false", dest="force",
+                             help="disable force even when run.force is true "
+                                  "in config.toml")
+    yes_group = p_run.add_mutually_exclusive_group()
+    yes_group.add_argument("-y", "--yes", action="store_true", default=None,
+                           help="overwrite existing outputs without asking "
+                                "(default: run.yes in config.toml, or false)")
+    yes_group.add_argument("--no-yes", action="store_false", dest="yes",
+                           help="ask before overwriting even when run.yes is "
+                                "true in config.toml")
 
     p_burn = sub.add_parser(
         "burn", help="burn existing SRT subtitles into one or more videos",
         description="Burn existing subtitles locally, without ASR or translation. "
+                    "Explicit CLI options override config.toml. "
                     "Outputs: <output-dir>/<video-stem>.sub.mp4.",
         epilog="examples:\n"
                "  ja-video-subtitles burn video.mp4 -o out\n"
                "  ja-video-subtitles burn video.mp4 -s captions.srt -o out\n"
                "  ja-video-subtitles burn a.mp4 b.mov -o out\n"
-               "  ja-video-subtitles burn ./videos --subtitle-dir ./subs -o out -y",
+               "  ja-video-subtitles burn ./videos --subtitle-dir ./subs -o out -y\n"
+               "  ja-video-subtitles burn   # inputs/output from [burn] in config.toml\n"
+               "  ja-video-subtitles burn -o out --no-yes   # override configured options",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p_burn.add_argument("inputs", nargs="+",
-                        help="one or more mp4/mov files or folders (nonrecursive)")
-    p_burn.add_argument("-o", "--output-dir", required=True,
-                        help="directory for output videos, log, and report")
+    p_burn.add_argument("inputs", nargs="*", type=_path_arg,
+                        help="one or more mp4/mov files or folders "
+                             "(nonrecursive) (default: burn.inputs in config.toml)")
+    p_burn.add_argument("-o", "--output-dir", type=_path_arg,
+                        help="directory for output videos, log, and report "
+                             "(default: burn.output_dir in config.toml)")
     subtitle_source = p_burn.add_mutually_exclusive_group()
-    subtitle_source.add_argument("-s", "--subtitles",
-                                 help="explicit SRT path (one video only)")
+    subtitle_source.add_argument("-s", "--subtitles", type=_path_arg,
+                                 help="explicit SRT path (one video only; "
+                                      "default: burn.subtitles in config.toml)")
     subtitle_source.add_argument(
-        "--subtitle-dir", help="directory of <video-stem>.bilingual.srt files "
-                               "(defaults to output-dir)")
-    p_burn.add_argument("-y", "--yes", action="store_true",
-                        help="overwrite existing outputs without asking")
+        "--subtitle-dir", type=_path_arg,
+        help="directory of <video-stem>.bilingual.srt files "
+             "(default: burn.subtitle_dir in config.toml, or output-dir)")
+    burn_yes_group = p_burn.add_mutually_exclusive_group()
+    burn_yes_group.add_argument("-y", "--yes", action="store_true", default=None,
+                                help="overwrite existing outputs without asking "
+                                     "(default: burn.yes in config.toml, or false)")
+    burn_yes_group.add_argument("--no-yes", action="store_false", dest="yes",
+                                help="ask before overwriting even when burn.yes "
+                                     "is true in config.toml")
 
     args = ap.parse_args()
     if args.command == "download":
         try:
             model_id = load().asr_model_id
-        except Exception:
+        except Exception as e:
             from .config import DEFAULT_ASR_MODEL
+            print(f"cannot read config ({safe_error(e)}); using the default "
+                  f"ASR model {DEFAULT_ASR_MODEL}", file=sys.stderr)
             model_id = DEFAULT_ASR_MODEL
         download(model_id)
         return

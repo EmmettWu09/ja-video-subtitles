@@ -44,6 +44,7 @@ class TestVocabularyPipeline(unittest.TestCase):
         self.translate = self.enterContext(mock.patch.object(
             cli.translate_mod, "translate",
             side_effect=AssertionError("cached ZH should be reused")))
+        self.enterContext(mock.patch.object(cli, "load", return_value=self.cfg))
 
     def make_video(self, stem):
         video = self.inputs / f"{stem}.mp4"
@@ -136,7 +137,8 @@ class TestVocabularyPipeline(unittest.TestCase):
         self.generate.side_effect = generate
         with mock.patch.object(cli.preflight, "run", return_value=(self.cfg, self.ffmpeg)):
             code = cli.cmd_run(argparse.Namespace(input=str(self.inputs),
-                output_dir=str(self.out), yes=True, force=False))
+                output_dir=str(self.out), yes=True, force=False,
+                vocab_output_dir=None, vocab_format=None))
         self.assertEqual(code, 1)
         self.assertEqual(self.burn.call_count, 2)
         self.assertTrue((self.out / f"{second.stem}.sub.mp4").exists())
@@ -150,7 +152,8 @@ class TestVocabularyPipeline(unittest.TestCase):
         self.assertNotIn(self.cfg.api_key, report)
 
     def run_command(self, **options):
-        values = dict(input=str(self.inputs), output_dir=str(self.out), yes=True, force=False)
+        values = dict(input=str(self.inputs), output_dir=str(self.out), yes=True,
+                      force=False, vocab_output_dir=None, vocab_format=None)
         values.update(options)
         with mock.patch.object(cli.preflight, "run", return_value=(self.cfg, self.ffmpeg)):
             return cli.cmd_run(argparse.Namespace(**values))

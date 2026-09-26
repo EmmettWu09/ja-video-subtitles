@@ -49,7 +49,7 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 
 模型存放在项目内 `.cache/hf/`（`HF_HOME` 已固定），下载成功写 `.model-ready` 标记。默认走 `hf-mirror.com` 镜像，可用 `HF_ENDPOINT=https://huggingface.co` 覆盖。
 
-如果只用 `burn`，安装 Python、`srt`、`tqdm` 和 ffmpeg 即可，配置文件、API key、ASR 模型及词汇词典均可跳过。项目中存在 `config.toml` 时只读取字幕样式和视频码率，否则使用默认值。`burn` 忽略词汇配置，不导入分词器或加载 JLPT 数据。
+如果只用 `burn`，安装 Python、`srt`、`tqdm` 和 ffmpeg 即可，配置文件、API key、ASR 模型及词汇词典均可跳过。项目中存在 `config.toml` 时只读取 `[burn]`、字幕样式和视频码率，否则使用默认值。`burn` 忽略词汇配置，不导入分词器或加载 JLPT 数据。
 
 ## 用法
 
@@ -72,6 +72,40 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 ```
 
 以上命令把所选 `xxx.vocab.md` 和/或 `xxx.vocab.json` 写入 `words`，字幕、`xxx.sub.mp4` 和 `xxx.mp3` 仍在 `media` 中。不指定时，默认在 `-o` 生成两种词汇格式。命令行选项优先于对应配置，所有相对路径均以执行命令时的目录为准。切换格式会保留旧的未选格式文件，但不将它们列入本次报告。词汇配置 `enabled = false` 时，这些选项不会启用词汇功能。
+
+### 把常用参数写进 config.toml
+
+所有业务参数逐项按「命令行显式参数 → `config.toml` 对应配置 → 内置默认值」取值。两种来源的相对路径都以执行命令时的目录为准，开头的 `~` 展开为用户主目录。
+
+| 命令 | 命令行参数 | 配置键 | 两者都没有时 |
+|---|---|---|---|
+| `run` | 位置参数 input | `run.input` | 合并后必填 |
+| `run` | `-o/--output-dir` | `run.output_dir` | 合并后必填 |
+| `run` | `--force` / `--no-force` | `run.force` | `false` |
+| `run` | `-y/--yes` / `--no-yes` | `run.yes` | `false` |
+| `run` | `--vocab-output-dir` | `vocabulary.output_dir` | 跟随有效主输出目录 |
+| `run` | `--vocab-format` | `vocabulary.format` | `both` |
+| `burn` | 位置参数 inputs | `burn.inputs` | 合并后必填 |
+| `burn` | `-o/--output-dir` | `burn.output_dir` | 合并后必填 |
+| `burn` | `-s/--subtitles` | `burn.subtitles` | 无显式字幕文件 |
+| `burn` | `--subtitle-dir` | `burn.subtitle_dir` | 在有效主输出目录匹配 |
+| `burn` | `-y/--yes` / `--no-yes` | `burn.yes` | `false` |
+
+配置好之后可以直接执行裸命令：
+
+```toml
+[run]
+input = "videos"
+output_dir = "out"
+```
+
+```bash
+./ja-video-subtitles run                 # 输入与输出都来自 config.toml
+./ja-video-subtitles run -o temporary    # 只用命令行覆盖输出目录
+./ja-video-subtitles burn                # burn.inputs / burn.output_dir / ...
+```
+
+命令行输入列表会整体替换 `burn.inputs`（不追加配置中的视频）；命令行字幕来源（`-s` 或 `--subtitle-dir`）会整体替换配置中的两个来源，配置内的 `burn.subtitles` 与 `burn.subtitle_dir` 互斥。配置中 `force`/`yes` 为 `true` 与传 `--force`/`-y` 效果相同——裸命令也会重跑或自动覆盖，用 `--no-force`/`--no-yes` 可单次关闭；同一开关正反同时给出会报错。配置值非法时即使命令行给了同项合法值也会报错；合法但被命令行覆盖的配置路径不会被检查或创建。
 
 ### 只烧录已有字幕
 

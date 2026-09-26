@@ -13,6 +13,35 @@ model = "deepseek-flash"
 # Japanese ASR model (faster-whisper format); the default is recommended
 model_id = "kotoba-tech/kotoba-whisper-v2.0-faster"
 
+# Defaults for `run`. Explicit CLI options always win over these settings;
+# relative paths are resolved against the directory where you run the command.
+# Setting force/yes to true behaves exactly like passing --force/-y.
+[run]
+# Positional input: an mp4/mov file or a folder of them.
+# input = "videos"
+# -o/--output-dir: subtitles, sub.mp4, MP3, log, and report.
+# output_dir = "out"
+# --force: redo every stage, ignoring existing artifacts.
+force = false
+# -y/--yes: overwrite existing outputs without asking.
+yes = false
+
+# Defaults for standalone `burn`; ignored by `run`.
+[burn]
+# Positional inputs: mp4/mov files or folders (nonrecursive). A CLI input
+# list replaces this whole list instead of appending to it.
+# inputs = ["video.mp4", "more-videos"]
+# -o/--output-dir: burned videos, log, and report.
+# output_dir = "burned"
+# -s/--subtitles: one explicit SRT, only for a single video after expansion.
+# Do not set it together with subtitle_dir.
+# subtitles = "edited.srt"
+# --subtitle-dir: directory of <video-stem>.bilingual.srt files.
+# Empty means: match subtitles inside the effective output directory.
+# subtitle_dir = "subtitles"
+# -y/--yes: overwrite existing outputs without asking.
+yes = false
+
 # Companion vocabulary glossary; standalone `burn` ignores this section.
 [vocabulary]
 # Omitted CLI options use these settings; each CLI option overrides only its own setting.

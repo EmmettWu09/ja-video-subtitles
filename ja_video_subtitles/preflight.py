@@ -8,8 +8,7 @@ from pathlib import Path
 
 from . import audio, model as model_mod
 from .api_util import chat_options, safe_error
-from .config import (BurnConfig, Config, api_key_valid, load, load_burn,
-                     vocabulary_output_dir)
+from .config import BurnConfig, Config, api_key_valid, vocabulary_output_dir
 from .ffmpeg_util import find_ffmpeg, find_ffprobe
 
 REQUIRED_PACKAGES = ["faster_whisper", "openai", "srt", "tqdm", "huggingface_hub"]
@@ -21,13 +20,12 @@ class PreflightError(Exception):
     pass
 
 
-def run(videos: list[Path], out_dir: Path, *,
-        vocab_output_dir: str | None = None,
-        vocab_format: str | None = None) -> tuple[Config, Path]:
-    """Resolve run settings and return (config, ffmpeg) after startup checks.
+def run(videos: list[Path], out_dir: Path,
+        cfg: Config) -> tuple[Config, Path]:
+    """Check run prerequisites and return (config, ffmpeg).
 
-    Omitted CLI values are None, so each option keeps its config/default value
-    independently. Failures are collected into one PreflightError.
+    The caller loads and finalizes cfg once; preflight never reloads it.
+    Failures are collected into one PreflightError.
     """
     errors = _check_runtime(REQUIRED_PACKAGES)
 
@@ -40,28 +38,13 @@ def run(videos: list[Path], out_dir: Path, *,
         errors.append("ffmpeg has no libmp3lame MP3 encoder. "
                       "Install: brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full")
 
-    # 3. config file and api_key
-    cfg: Config | None = None
-    try:
-        cfg = load()
-        # Apply only explicitly supplied CLI values, before destination checks.
-        if vocab_output_dir is not None:
-            if not vocab_output_dir or "\x00" in vocab_output_dir:
-                raise ValueError("--vocab-output-dir must be a nonempty path")
-            cfg.vocabulary_output_dir = vocab_output_dir
-        if vocab_format is not None:
-            if vocab_format not in ("md", "json", "both"):
-                raise ValueError("--vocab-format must be one of md/json/both")
-            cfg.vocabulary_format = vocab_format
-        if not api_key_valid(cfg):
-            errors.append("deepseek.api_key in config.toml is empty or "
-                          "still the placeholder")
-    except Exception as e:
-        errors.append(str(e))
-        cfg = None
+    # 3. api_key
+    if not api_key_valid(cfg):
+        errors.append("deepseek.api_key in config.toml is empty or "
+                      "still the placeholder")
 
     # 4. DeepSeek API connectivity
-    if cfg is not None and api_key_valid(cfg):
+    if api_key_valid(cfg):
         try:
             from openai import OpenAI
             client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key,
@@ -75,11 +58,11 @@ def run(videos: list[Path], out_dir: Path, *,
                           f"{safe_error(e, cfg.api_key)}")
 
     # 5. ASR model ready (never auto-download here)
-    if cfg is not None and not model_mod.model_ready(cfg.asr_model_id):
+    if not model_mod.model_ready(cfg.asr_model_id):
         errors.append("ASR model not downloaded. Run: ja-video-subtitles download")
 
     # Vocabulary is optional; keep its imports and dictionaries out of burn.
-    if cfg is not None and cfg.vocabulary_enabled:
+    if cfg.vocabulary_enabled:
         try:
             from . import vocabulary
             vocabulary.check_ready()
@@ -93,7 +76,7 @@ def run(videos: list[Path], out_dir: Path, *,
                 "or set vocabulary.enabled = false.")
 
     errors.extend(_check_output(videos, out_dir))
-    if cfg is not None and cfg.vocabulary_enabled:
+    if cfg.vocabulary_enabled:
         try:
             vocab_dir = vocabulary_output_dir(cfg, out_dir)
             if vocab_dir.resolve() != out_dir.resolve():
@@ -106,7 +89,8 @@ def run(videos: list[Path], out_dir: Path, *,
     return cfg, ffmpeg
 
 
-def run_burn(videos: list[Path], out_dir: Path) -> tuple[BurnConfig, Path]:
+def run_burn(videos: list[Path], out_dir: Path,
+             cfg: BurnConfig) -> tuple[BurnConfig, Path]:
     """Check local burning prerequisites without ASR or translation services."""
     errors = _check_runtime(BURN_REQUIRED_PACKAGES)
     ffmpeg = find_ffmpeg()
@@ -117,15 +101,10 @@ def run_burn(videos: list[Path], out_dir: Path) -> tuple[BurnConfig, Path]:
         errors.append("no ffprobe found for reading video duration. "
                       "Install ffmpeg/ffprobe: "
                       "brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full")
-    cfg: BurnConfig | None = None
-    try:
-        cfg = load_burn()
-    except Exception as e:
-        errors.append(str(e))
     errors.extend(_check_output(videos, out_dir))
     if errors:
         raise PreflightError("\n".join(f"  x {e}" for e in errors))
-    assert cfg is not None and ffmpeg is not None
+    assert ffmpeg is not None
     return cfg, ffmpeg
 
 

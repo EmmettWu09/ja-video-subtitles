@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from ja_video_subtitles import cli
+from ja_video_subtitles import cli, config
 
 
 SRT = "1\n00:00:00,000 --> 00:00:01,000\n日本語\n中文字幕\n\n"
@@ -25,8 +25,11 @@ class TestBurnCli(unittest.TestCase):
         self.out.mkdir()
         self.cfg = SimpleNamespace(force_style="FontSize=24", video_bitrate="6M")
         self.ffmpeg = Path("/mock/ffmpeg")
+        self.load_burn = self.patch(
+            "ja_video_subtitles.cli.load_burn",
+            return_value=config.BurnConfig("FontSize=24", "6M"))
 
-        def preflight(videos, output):
+        def preflight(videos, output, cfg):
             output.mkdir(parents=True, exist_ok=True)
             return self.cfg, self.ffmpeg
 
@@ -327,6 +330,9 @@ class TestBurnCli(unittest.TestCase):
 
     def test_run_shared_batch_preserves_force_yes_skip_and_report_behavior(self):
         video = self.video()
+        loaded = SimpleNamespace(run_input=None, run_output_dir=None,
+                                 run_force=False, run_yes=False)
+        self.patch("ja_video_subtitles.cli.load", return_value=loaded)
         cfg = SimpleNamespace(asr_model_id="asr", model="translator",
                               base_url="https://example.invalid", video_bitrate="8M")
         self.full_preflight.side_effect = None
@@ -364,7 +370,7 @@ class TestBurnCli(unittest.TestCase):
                     self.assertEqual(target.read_bytes(), b"processed")
                     self.assertIn("1 succeeded, 0 failed, 0 skipped", stdout)
                     self.assertIn("| Burn | done |", report)
-        self.full_preflight.assert_called_with([video], self.out)
+        self.full_preflight.assert_called_with([video], self.out, loaded)
         self.preflight.assert_not_called()
 
     def test_run_still_dispatches_to_original_pipeline(self):

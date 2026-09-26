@@ -42,10 +42,15 @@ class ConfigError(Exception):
 
 @dataclass
 class BurnConfig:
-    """Local rendering settings, independent of translation and vocabulary."""
+    """Standalone-burn settings, independent of translation and vocabulary."""
 
     force_style: str
     video_bitrate: str
+    inputs: list[str] | None = None
+    output_dir: str | None = None
+    subtitles: str = ""
+    subtitle_dir: str = ""
+    yes: bool = False
 
 
 @dataclass
@@ -66,6 +71,46 @@ class Config:
     max_examples: int = 3
     vocabulary_output_dir: str = ""
     vocabulary_format: str = "both"
+    run_input: str | None = None
+    run_output_dir: str | None = None
+    run_force: bool = False
+    run_yes: bool = False
+
+
+def _section(data: dict, name: str, path: Path) -> dict:
+    section = data.get(name, {})
+    if not isinstance(section, dict):
+        raise ConfigError(f"{name} in {path} must be a TOML table")
+    return section
+
+
+def _required_path(section: dict, key: str, field: str, path: Path) -> str | None:
+    """A configured main path must be a nonempty, blank-free, NUL-free string."""
+    if key not in section:
+        return None
+    value = section[key]
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise ConfigError(f"{field} in {path} must be a nonempty path string")
+    return value
+
+
+def _optional_path(section: dict, key: str, field: str, path: Path) -> str:
+    """Only the exact empty string selects the default; blanks are invalid."""
+    if key not in section:
+        return ""
+    value = section[key]
+    if not isinstance(value, str) or "\x00" in value or (value and not value.strip()):
+        raise ConfigError(f'{field} in {path} must be a path string or ""')
+    return value
+
+
+def _boolean(section: dict, key: str, field: str, path: Path) -> bool:
+    if key not in section:
+        return False
+    value = section[key]
+    if not isinstance(value, bool):
+        raise ConfigError(f"{field} in {path} must be a boolean")
+    return value
 
 
 def vocabulary_output_dir(cfg: Config, out_dir: Path) -> Path:
@@ -81,7 +126,7 @@ def vocabulary_output_dir(cfg: Config, out_dir: Path) -> Path:
 
 
 def load_burn(path: Path | None = None) -> BurnConfig:
-    """Load only rendering settings; burning needs no translation config."""
+    """Load only burn-scope settings; burning needs no translation config."""
     path = path or (PROJECT_ROOT / "config.toml")
     data = {}
     if path.exists():
@@ -92,11 +137,9 @@ def load_burn(path: Path | None = None) -> BurnConfig:
         except tomllib.TOMLDecodeError as e:
             raise ConfigError(f"invalid TOML in {path}: {e}") from e
 
-    style = data.get("style", {})
-    video = data.get("video", {})
-    for name, section in (("style", style), ("video", video)):
-        if not isinstance(section, dict):
-            raise ConfigError(f"{name} in {path} must be a TOML table")
+    style = _section(data, "style", path)
+    video = _section(data, "video", path)
+    burn = _section(data, "burn", path)
     force_style = style.get("force_style", DEFAULT_FORCE_STYLE)
     bitrate = video.get("bitrate", DEFAULT_VIDEO_BITRATE)
     if not isinstance(force_style, str):
@@ -107,14 +150,29 @@ def load_burn(path: Path | None = None) -> BurnConfig:
         raise ConfigError(
             f"video.bitrate in {path} must be a positive bitrate string "
             '(for example "8M", "8000k", or "8000000")')
-    return BurnConfig(force_style=force_style, video_bitrate=bitrate)
+    inputs = burn.get("inputs")
+    if inputs is not None and (
+            not isinstance(inputs, list) or not inputs
+            or any(not isinstance(item, str) or not item.strip() or "\x00" in item
+                   for item in inputs)):
+        raise ConfigError(f"burn.inputs in {path} must be an array of at least "
+                          "one nonempty path string")
+    return BurnConfig(
+        force_style=force_style,
+        video_bitrate=bitrate,
+        inputs=inputs,
+        output_dir=_required_path(burn, "output_dir", "burn.output_dir", path),
+        subtitles=_optional_path(burn, "subtitles", "burn.subtitles", path),
+        subtitle_dir=_optional_path(burn, "subtitle_dir", "burn.subtitle_dir", path),
+        yes=_boolean(burn, "yes", "burn.yes", path),
+    )
 
 
 def load(path: Path | None = None) -> Config:
-    """Load project-local TOML defaults and validate vocabulary settings.
+    """Load and strictly validate pipeline and [run] settings.
 
-    This does not apply CLI overrides or contact the API; preflight handles
-    those steps after loading. Missing vocabulary fields retain defaults.
+    This does not apply CLI overrides or contact the API; the command entry
+    merges explicit CLI values after loading. Missing fields retain defaults.
     """
     path = path or (PROJECT_ROOT / "config.toml")
     if not path.exists():
@@ -123,6 +181,8 @@ def load(path: Path | None = None) -> Config:
             "cp config.example.toml config.toml")
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as e:
+        raise ConfigError(f"cannot read config file {path}: {e}") from e
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"invalid TOML in {path}: {e}") from e
 
@@ -131,14 +191,12 @@ def load(path: Path | None = None) -> Config:
     style = data.get("style", {})
     asr = data.get("asr", {})
     video = data.get("video", {})
-    vocabulary = data.get("vocabulary", {})
-    if not isinstance(vocabulary, dict):
-        raise ConfigError(f"vocabulary in {path} must be a TOML table")
+    run = _section(data, "run", path)
+    vocabulary = _section(data, "vocabulary", path)
     enabled = vocabulary.get("enabled", True)
     learner_level = vocabulary.get("learner_level", "N3")
     include_unknown = vocabulary.get("include_unknown", True)
     max_examples = vocabulary.get("max_examples", 3)
-    output_dir = vocabulary.get("output_dir", "")
     output_format = vocabulary.get("format", "both")
     for name, value in (("enabled", enabled), ("include_unknown", include_unknown)):
         if not isinstance(value, bool):
@@ -149,8 +207,8 @@ def load(path: Path | None = None) -> Config:
     if type(max_examples) is not int or not 1 <= max_examples <= 10:
         raise ConfigError(
             f"vocabulary.max_examples in {path} must be an integer from 1 to 10")
-    if not isinstance(output_dir, str) or "\x00" in output_dir:
-        raise ConfigError(f"vocabulary.output_dir in {path} must be a path string")
+    output_dir = _optional_path(vocabulary, "output_dir",
+                                "vocabulary.output_dir", path)
     if output_format not in ("md", "json", "both"):
         raise ConfigError(f"vocabulary.format in {path} must be one of md/json/both")
     return Config(
@@ -168,6 +226,10 @@ def load(path: Path | None = None) -> Config:
         max_examples=max_examples,
         vocabulary_output_dir=output_dir,
         vocabulary_format=output_format,
+        run_input=_required_path(run, "input", "run.input", path),
+        run_output_dir=_required_path(run, "output_dir", "run.output_dir", path),
+        run_force=_boolean(run, "force", "run.force", path),
+        run_yes=_boolean(run, "yes", "run.yes", path),
     )
 
 

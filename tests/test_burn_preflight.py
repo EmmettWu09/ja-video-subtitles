@@ -82,13 +82,18 @@ class TestBurnPreflight(unittest.TestCase):
             preflight, "find_ffprobe", return_value=Path("/test/ffprobe")))
         self.disk_usage = self.enterContext(mock.patch.object(
             preflight.shutil, "disk_usage", return_value=SimpleNamespace(free=1024)))
-        self.full_load = self.enterContext(mock.patch.object(
-            preflight, "load", side_effect=AssertionError("full config requested")))
         self.api_key_valid = self.enterContext(mock.patch.object(
             preflight, "api_key_valid", side_effect=AssertionError("API key checked")))
         self.model_ready = self.enterContext(mock.patch.object(
             preflight.model_mod, "model_ready",
             side_effect=AssertionError("ASR model checked")))
+
+    def load_cfg(self):
+        return config.load_burn(self.root / "config.toml")
+
+    def run_burn(self, videos=None):
+        return preflight.run_burn(
+            [self.video] if videos is None else videos, self.out, self.load_cfg())
 
     @staticmethod
     def local_import(name):
@@ -97,23 +102,31 @@ class TestBurnPreflight(unittest.TestCase):
         raise AssertionError(f"unexpected dependency import: {name}")
 
     def test_defaults_need_only_local_dependencies(self):
-        cfg, ffmpeg = preflight.run_burn([self.video], self.out)
+        cfg, ffmpeg = self.run_burn()
         self.assertEqual(cfg, config.BurnConfig(
             config.DEFAULT_FORCE_STYLE, config.DEFAULT_VIDEO_BITRATE))
         self.assertEqual(ffmpeg, self.ffmpeg)
         self.assertTrue(self.out.is_dir())
         self.assertEqual(self.import_module.call_args_list,
                          [mock.call("srt"), mock.call("tqdm")])
-        self.full_load.assert_not_called()
         self.api_key_valid.assert_not_called()
         self.model_ready.assert_not_called()
+
+    def test_preflight_never_reloads_the_config_file(self):
+        cfg = self.load_cfg()
+        with mock.patch.object(config, "load_burn",
+                               side_effect=AssertionError("reloaded")), \
+                mock.patch.object(config, "load",
+                                  side_effect=AssertionError("reloaded")):
+            result, _ = preflight.run_burn([self.video], self.out, cfg)
+        self.assertIs(result, cfg)
 
     def test_placeholder_api_key_and_missing_model_do_not_block(self):
         (self.root / "config.toml").write_text(
             '[deepseek]\napi_key = "your-api-key"\n'
             '[asr]\nmodel_id = "not-downloaded"\n'
             '[video]\nbitrate = "3M"\n', encoding="utf-8")
-        cfg, _ = preflight.run_burn([self.video], self.out)
+        cfg, _ = self.run_burn()
         self.assertEqual(cfg.video_bitrate, "3M")
         self.api_key_valid.assert_not_called()
         self.model_ready.assert_not_called()
@@ -122,7 +135,7 @@ class TestBurnPreflight(unittest.TestCase):
         self.out.mkdir(parents=True)
         probe = self.out / ".write_probe"
         probe.write_text("keep me", encoding="utf-8")
-        preflight.run_burn([self.video], self.out)
+        self.run_burn()
         self.assertEqual(probe.read_text(encoding="utf-8"), "keep me")
         self.assertEqual(list(self.out.iterdir()), [probe])
 
@@ -131,7 +144,7 @@ class TestBurnPreflight(unittest.TestCase):
         second.write_bytes(b"video")
         self.disk_usage.return_value.free = 15
         with self.assertRaisesRegex(preflight.PreflightError, "insufficient disk space"):
-            preflight.run_burn([self.video, second], self.out)
+            self.run_burn([self.video, second])
 
     def test_local_prerequisite_errors_are_reported_together(self):
         self.find_ffmpeg.return_value = None
@@ -139,29 +152,29 @@ class TestBurnPreflight(unittest.TestCase):
         with mock.patch.object(preflight.sys, "platform", "linux"), \
                 mock.patch.object(preflight.sys, "version_info", (3, 11)):
             with self.assertRaises(preflight.PreflightError) as raised:
-                preflight.run_burn([self.video], self.out)
+                self.run_burn()
         message = str(raised.exception)
         self.assertIn("macOS only", message)
         self.assertIn("Python >= 3.12", message)
         self.assertIn("missing packages: srt, tqdm", message)
         self.assertIn("no ffmpeg with the subtitles filter", message)
 
-    def test_config_error_is_a_preflight_error(self):
+    def test_broken_config_fails_before_preflight(self):
         (self.root / "config.toml").write_text("[video", encoding="utf-8")
-        with self.assertRaisesRegex(preflight.PreflightError, "invalid TOML"):
-            preflight.run_burn([self.video], self.out)
+        with self.assertRaisesRegex(config.ConfigError, "invalid TOML"):
+            self.load_cfg()
 
     def test_missing_ffprobe_is_a_preflight_error(self):
         self.find_ffprobe.return_value = None
         with self.assertRaisesRegex(preflight.PreflightError, "no ffprobe found"):
-            preflight.run_burn([self.video], self.out)
+            self.run_burn()
         self.find_ffprobe.assert_called_once_with(self.ffmpeg)
 
     def test_unwritable_output_is_a_preflight_error(self):
         with mock.patch.object(preflight.tempfile, "TemporaryFile",
                                side_effect=PermissionError("blocked")):
             with self.assertRaisesRegex(preflight.PreflightError, "is not writable"):
-                preflight.run_burn([self.video], self.out)
+                self.run_burn()
 
 
 if __name__ == "__main__":
