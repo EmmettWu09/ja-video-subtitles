@@ -7,7 +7,7 @@
 
 ### Requirement: 配置文件
 
-配置文件 SHALL 从项目根目录（包所在位置）的 `config.toml` 读取，与命令执行时的当前目录无关。配置项包含 DeepSeek `base_url`（默认 `https://api.deepseek.com`）、`api_key`（无默认值）、`model`（默认 `deepseek-flash`），有内置默认值的翻译 prompt 模板、烧录字幕样式及 `[video] bitrate`（默认 `8M`）。`run` SHALL 要求配置文件存在且 api_key 有效。`burn` SHALL 允许配置文件不存在或缺少/留空 api_key：不存在时使用默认烧录样式和码率，存在时应用烧录相关覆盖项，SHALL NOT 验证或使用翻译 API 配置。无法解析的 TOML 或非法烧录配置 SHALL 在处理前报错。`run` 新增 `[vocabulary]` 配置：`enabled` 默认 true、`learner_level` 默认 `N3`、`include_unknown` 默认 true、`max_examples` 默认 3、`output_dir` 默认空字符串、`format` 默认 `both`。`enabled` 和 `include_unknown` SHALL 仅接受布尔值，`learner_level` SHALL 仅接受 N5/N4/N3/N2/N1，`max_examples` SHALL 仅接受 1 到 10 的整数（布尔值不视为整数）。`output_dir` SHALL 为字符串，空字符串回退到 `-o`；非空路径 SHALL 相对命令执行时的 cwd 解析。`format` SHALL 仅接受 `md`、`json`、`both`。`run --vocab-output-dir` 和 `--vocab-format` 的显式值 SHALL 分别优先于合法配置中的对应值；配置本身 SHALL 先通过类型和枚举校验。`burn` SHALL 忽略词汇配置，不验证其值或要求词汇依赖。
+配置文件 SHALL 从项目根目录（包所在位置）的 `config.toml` 读取，与命令执行时的当前目录无关。配置项包含 DeepSeek `base_url`（默认 `https://api.deepseek.com`）、`api_key`（无默认值）、`model`（默认 `deepseek-flash`），有内置默认值的翻译 prompt 模板、烧录字幕样式及 `[video] bitrate`（默认 `8M`）。`run` SHALL 要求配置文件存在且 api_key 有效。`burn` SHALL 允许配置文件不存在或缺少/留空 api_key：不存在时使用默认烧录样式和码率，存在时应用烧录相关覆盖项，SHALL NOT 验证或使用翻译 API 配置。无法解析的 TOML 或非法烧录配置 SHALL 在处理前报错。`run` 新增 `[vocabulary]` 配置：`enabled` 默认 true、`learner_level` 默认 `N3`、`include_unknown` 默认 true、`max_examples` 默认 3、`output_dir` 默认空字符串、`format` 默认 `both`。`enabled` 和 `include_unknown` SHALL 仅接受布尔值，`learner_level` SHALL 仅接受 N5/N4/N3/N2/N1，`max_examples` SHALL 仅接受 1 到 10 的整数（布尔值不视为整数）。`output_dir` SHALL 为字符串，空字符串回退到 `-o`；非空路径 SHALL 相对命令执行时的 cwd 解析。`format` SHALL 仅接受 `md`、`json`、`both`。`run --vocab-output-dir` 和 `--vocab-format` 的显式值 SHALL 分别优先于合法配置中的对应值；配置本身 SHALL 先通过类型和枚举校验。`run` 新增 `[highlights]` 配置：`enabled` 默认 true、`target_seconds` 默认 240、`intro_start_seconds` 默认 0、`ja_voice` 默认 `Kyoko`、`zh_voice` 默认 `Tingting`。`highlights.enabled` SHALL 仅接受布尔值；`target_seconds` SHALL 仅接受 60 到 900 的整数（布尔值不视为整数）；`intro_start_seconds` SHALL 仅接受不小于 0 的数值（布尔值不视为数值）；`ja_voice` 与 `zh_voice` SHALL 为非空、非纯空白且不含 NUL（U+0000）的字符串。`run --highlights`/`--no-highlights` 的显式值 SHALL 优先于合法配置中的 `highlights.enabled`；配置本身 SHALL 先通过类型和取值校验。`burn` SHALL 忽略词汇与高光配置，不验证其值或要求相关依赖。
 
 #### Scenario: 正常加载
 
@@ -39,6 +39,11 @@
 - **WHEN** config.toml 没有 `[vocabulary]`
 - **THEN** 使用 enabled=true、learner_level=N3、include_unknown=true、max_examples=3、output_dir=""、format=both
 
+#### Scenario: 未配置 highlights
+
+- **WHEN** config.toml 没有 `[highlights]`
+- **THEN** 使用 enabled=true、target_seconds=240、intro_start_seconds=0、ja_voice=Kyoko、zh_voice=Tingting，即默认生成高光
+
 #### Scenario: 非法学习者等级
 
 - **WHEN** `run` 的 learner_level 不是 N5/N4/N3/N2/N1，或 max_examples 超出范围
@@ -49,20 +54,40 @@
 - **WHEN** `run` 的 vocabulary.enabled 或 include_unknown 不是布尔值，或 max_examples 不是整数（包括误用布尔值）
 - **THEN** 预检失败并给出字段与合法类型，不开始处理视频
 
+#### Scenario: 非法高光配置
+
+- **WHEN** `run` 的 highlights.enabled 不是布尔值、target_seconds 超出 60–900 或非整数、intro_start_seconds 为负数，或 ja_voice/zh_voice 为空或纯空白字符串
+- **THEN** 预检失败并给出字段与合法类型/取值，不开始处理视频
+
 #### Scenario: 禁用词汇功能
 
 - **WHEN** vocabulary.enabled 为 false
 - **THEN** 不运行词汇阶段，也不要求形态分析词典和 JLPT 数据就绪
+
+#### Scenario: 禁用高光功能
+
+- **WHEN** highlights.enabled 为 false 且无 CLI 覆盖
+- **THEN** 不运行高光阶段，也不要求 `say` 命令与音色可用
 
 #### Scenario: 独立烧录忽略词汇设置
 
 - **WHEN** `burn` 使用的 TOML 可以解析，但 vocabulary 部分缺失或包含非法词汇配置
 - **THEN** 仅验证并应用烧录配置，不因词汇设置或词典缺失而阻止烧录
 
+#### Scenario: 独立烧录忽略高光设置
+
+- **WHEN** `burn` 使用的 TOML 可以解析，但 highlights 部分缺失或包含非法高光配置
+- **THEN** 仅验证并应用烧录配置，不因高光设置而阻止烧录
+
 #### Scenario: 命令行覆盖词汇输出配置
 
 - **WHEN** 配置为 output_dir="saved-words"、format="json"，命令指定 `--vocab-output-dir notes --vocab-format md`
 - **THEN** 词汇只生成到 cwd 下 `notes` 的 Markdown，配置值不覆盖显式参数
+
+#### Scenario: 命令行覆盖高光开关
+
+- **WHEN** 配置为 highlights.enabled=false，命令指定 `--highlights`
+- **THEN** 本次运行执行高光阶段，配置值不覆盖显式参数
 
 #### Scenario: 配置中的相对目录
 
@@ -117,6 +142,7 @@
 | `run` | `-y/--yes/--no-yes` | `run.yes` | `false` |
 | `run` | `--vocab-output-dir` | `vocabulary.output_dir` | 使用最终有效的 `run` 主输出目录 |
 | `run` | `--vocab-format` | `vocabulary.format` | `both` |
+| `run` | `--highlights/--no-highlights` | `highlights.enabled` | `true`（默认生成高光） |
 | `burn` | 位置参数 `inputs` | `burn.inputs` | 无默认值，合并后必填 |
 | `burn` | `-o/--output-dir` | `burn.output_dir` | 无默认值，合并后必填 |
 | `burn` | `-s/--subtitles` | `burn.subtitles` | 未指定显式字幕文件 |
@@ -138,9 +164,14 @@
 - **WHEN** 合法配置不含 `[run]` 或 `[burn]`，用户通过命令行提供当前命令的完整输入和主输出目录
 - **THEN** 系统使用命令行输入与输出，未指定的布尔选项为 `false`，既有词汇、样式和码率配置继续生效
 
+#### Scenario: 配置关闭默认开启的高光
+
+- **WHEN** 合法配置提供 `highlights.enabled=false`，用户执行 `run video.mp4 -o out` 且未提供高光开关
+- **THEN** 本次运行不执行高光阶段，行为等同传入 `--no-highlights`
+
 ### Requirement: 按显式提供状态解析优先级
 
-在当前命令所需配置通过字段校验后，每个普通业务参数 SHALL 按「显式命令行参数 → 对应配置值 → 内置默认值」独立解析。系统 SHALL 区分命令行未提供与显式布尔 `false`，不得以真假判断或命令行解析阶段填入的业务默认值覆盖配置。`run` 的 `force` 和 `yes`、`burn` 的 `yes` SHALL 支持显式开启和显式关闭。一次调用中同一布尔选项的正反开关同时出现 SHALL 报错，而不得按出现顺序取最后一个值。烧录字幕来源 SHALL 遵循单独规定的整组覆盖规则。
+在当前命令所需配置通过字段校验后，每个普通业务参数 SHALL 按「显式命令行参数 → 对应配置值 → 内置默认值」独立解析。系统 SHALL 区分命令行未提供与显式布尔 `false`，不得以真假判断或命令行解析阶段填入的业务默认值覆盖配置。`run` 的 `force`、`yes` 和高光启用开关、`burn` 的 `yes` SHALL 支持显式开启和显式关闭。一次调用中同一布尔选项的正反开关同时出现 SHALL 报错，而不得按出现顺序取最后一个值。烧录字幕来源 SHALL 遵循单独规定的整组覆盖规则。
 
 #### Scenario: 命令行只覆盖指定字段
 
@@ -169,7 +200,7 @@
 
 #### Scenario: 正反布尔开关不能同时指定
 
-- **WHEN** 用户同时提供 `--force --no-force`，或同时提供 `--yes --no-yes`，不论顺序及 `-y` 别名
+- **WHEN** 用户同时提供 `--force --no-force`、同时提供 `--yes --no-yes`（不论顺序及 `-y` 别名），或同时提供 `--highlights --no-highlights`
 - **THEN** 系统以退出码 2 报告冲突，不开始处理视频
 
 ### Requirement: 输入列表与必需参数合并
@@ -237,7 +268,7 @@
 
 ### Requirement: 命令作用域内配置的严格校验
 
-当前命令对应的 `[run]` 或 `[burn]` 配置节如存在 SHALL 为 TOML 表。当前命令读取的已配置字段 SHALL 在应用命令行覆盖前通过类型和取值校验：`run.input`、`run.output_dir`、`burn.output_dir` SHALL 为非空、非纯空白且不含 NUL（U+0000）的路径字符串；`burn.inputs` SHALL 为至少包含一个元素的字符串数组，每个元素 SHALL 为非空、非纯空白且不含 NUL（U+0000）的路径字符串；`run.force`、`run.yes`、`burn.yes` SHALL 为布尔值，不接受字符串或数字替代。`burn.subtitles`、`burn.subtitle_dir` 和 `vocabulary.output_dir` SHALL 为不含 NUL（U+0000）的字符串，仅精确空字符串允许作为缺省值，非空但纯空白的字符串 SHALL 报错。`vocabulary.format` SHALL 继续仅接受 `md`、`json` 或 `both`。配置缺少字段 SHALL 允许后续命令行补齐或使用默认值；已配置非法值 SHALL 不被合法命令行值掩盖。校验失败 SHALL 指出配置字段和允许的类型或取值，以退出码 2 结束。
+当前命令对应的 `[run]` 或 `[burn]` 配置节如存在 SHALL 为 TOML 表。`run` 读取的 `[highlights]` 配置节如存在 SHALL 为 TOML 表。当前命令读取的已配置字段 SHALL 在应用命令行覆盖前通过类型和取值校验：`run.input`、`run.output_dir`、`burn.output_dir` SHALL 为非空、非纯空白且不含 NUL（U+0000）的路径字符串；`burn.inputs` SHALL 为至少包含一个元素的字符串数组，每个元素 SHALL 为非空、非纯空白且不含 NUL（U+0000）的路径字符串；`run.force`、`run.yes`、`burn.yes`、`highlights.enabled` SHALL 为布尔值，不接受字符串或数字替代。`burn.subtitles`、`burn.subtitle_dir` 和 `vocabulary.output_dir` SHALL 为不含 NUL（U+0000）的字符串，仅精确空字符串允许作为缺省值，非空但纯空白的字符串 SHALL 报错。`vocabulary.format` SHALL 继续仅接受 `md`、`json` 或 `both`。`highlights.target_seconds` SHALL 为 60 到 900 的整数（布尔值不视为整数）；`highlights.intro_start_seconds` SHALL 为不小于 0 的数值（布尔值不视为数值）；`highlights.ja_voice` 与 `highlights.zh_voice` SHALL 为非空、非纯空白且不含 NUL（U+0000）的字符串。配置缺少字段 SHALL 允许后续命令行补齐或使用默认值；已配置非法值 SHALL 不被合法命令行值掩盖。校验失败 SHALL 指出配置字段和允许的类型或取值，以退出码 2 结束。
 
 所有显式 CLI 路径（含位置输入、主输出、词汇目录及字幕文件/目录）SHALL 拒绝空字符串、纯空白和 NUL（U+0000），不得将这些非法值当作未提供。合法路径中的空格和其他字符 SHALL 原样保留，不得自动裁剪。
 
@@ -248,10 +279,20 @@
 - **WHEN** 当前执行 `run`，配置为 `run="invalid"`，命令行已提供合法输入和主输出目录
 - **THEN** 系统以退出码 2 提示 `run` 必须为 TOML 表，不开始处理视频
 
+#### Scenario: 高光配置表类型错误
+
+- **WHEN** 当前执行 `run`，配置为 `highlights="invalid"`
+- **THEN** 系统以退出码 2 提示 `highlights` 必须为 TOML 表，不开始处理视频
+
 #### Scenario: 布尔配置严格区分字符串与布尔值
 
-- **WHEN** 当前命令对应的 `force` 或 `yes` 配置为字符串 `"true"`、整数 `1` 或整数 `0`，即使命令行提供了对应正反开关
+- **WHEN** 当前命令对应的 `force`、`yes` 或 `highlights.enabled` 配置为字符串 `"true"`、整数 `1` 或整数 `0`，即使命令行提供了对应正反开关
 - **THEN** 系统报告该配置字段必须为布尔值，以退出码 2 结束
+
+#### Scenario: 非法高光配置不能被命令行掩盖
+
+- **WHEN** `highlights.target_seconds="240"` 或 `highlights.ja_voice=""`，用户执行 `run video.mp4 -o out --highlights`
+- **THEN** 系统报告对应配置字段的合法类型或取值，以退出码 2 结束
 
 #### Scenario: 烧录列表类型与元素严格校验
 
@@ -304,7 +345,7 @@
 
 ### Requirement: 子命令配置隔离与缺失文件兼容
 
-`run` SHALL 读取并验证 `[run]` 及既有完整流水线所需配置，忽略 `[burn]` 的形状和值。`burn` SHALL 只读取并验证 `[burn]`、`[style]` 和 `[video]`，忽略 `[run]`、`[deepseek]`、`[asr]`、`[prompt]` 和 `[vocabulary]` 的形状和值，不要求翻译 API、ASR 模型或词汇依赖。配置文件语法无法解析 SHALL 不受命令作用域隔离保护：`run` 和 `burn` 均 SHALL 以退出码 2 报错。缺少配置文件时，`run` SHALL 继续报错；`burn` 在命令行提供完整必需参数时 SHALL 使用内置布尔值、字幕来源和烧录设置继续运行。
+`run` SHALL 读取并验证 `[run]`、`[highlights]` 及既有完整流水线所需配置，忽略 `[burn]` 的形状和值。`burn` SHALL 只读取并验证 `[burn]`、`[style]` 和 `[video]`，忽略 `[run]`、`[deepseek]`、`[asr]`、`[prompt]`、`[vocabulary]` 和 `[highlights]` 的形状和值，不要求翻译 API、ASR 模型、词汇或高光依赖。配置文件语法无法解析 SHALL 不受命令作用域隔离保护：`run` 和 `burn` 均 SHALL 以退出码 2 报错。缺少配置文件时，`run` SHALL 继续报错；`burn` 在命令行提供完整必需参数时 SHALL 使用内置布尔值、字幕来源和烧录设置继续运行。
 
 #### Scenario: 运行忽略烧录命令专属配置
 
@@ -313,8 +354,8 @@
 
 #### Scenario: 烧录忽略流水线专属配置
 
-- **WHEN** `[burn]`、`[style]` 和 `[video]` 合法，其他配置节形状或字段值非法但整个 TOML 可解析，用户执行 `burn`
-- **THEN** `burn` 不校验这些无关配置，不初始化翻译、ASR 或词汇依赖，继续本地烧录预检
+- **WHEN** `[burn]`、`[style]` 和 `[video]` 合法，其他配置节（含 `[highlights]`）形状或字段值非法但整个 TOML 可解析，用户执行 `burn`
+- **THEN** `burn` 不校验这些无关配置，不初始化翻译、ASR、词汇或高光依赖，继续本地烧录预检
 
 #### Scenario: 烧录不能忽略 TOML 语法损坏
 
