@@ -60,10 +60,10 @@ cp config.example.toml config.toml   # deepseek.api_key を記入
 ./ja-video-subtitles run /path/to/dir   -o /path/to/output     # フォルダ一括
 ./ja-video-subtitles run /path/to/dir   -o out -y              # 同名ファイルを自動上書き
 ./ja-video-subtitles run xxx.mp4 -o out --force                # 全工程をやり直し
-./ja-video-subtitles run xxx.mp4 -o out --no-highlights        # ハイライトを省略
+./ja-video-subtitles run xxx.mp4 -o out --highlights           # ハイライトを生成（既定はオフ）
 ```
 
-授業ハイライトは既定で有効です。焼き付け後にダイジェスト動画 `xxx/xxx.highlights.mp4`（完成動画 `xxx/xxx.mp4` と並列）と `xxx/highlights/`（授業サマリー・個別ハイライトクリップ）を生成します（「全工程の成果物と動作」参照）。その回だけ省略するには `--no-highlights`、既定で無効にするには `highlights.enabled = false`、その回だけ再有効化するには `--highlights` を使います。
+授業ハイライトは既定で無効です。`--highlights` を付けるか `highlights.enabled = true` にすると、焼き付け後にダイジェスト動画 `xxx/xxx.highlights.mp4`（完成動画 `xxx/xxx.mp4` と並列）と `xxx/highlights/`（授業サマリー・個別ハイライトクリップ）を生成します（「全工程の成果物と動作」参照）。設定で有効にしている場合、その回だけ省略するには `--no-highlights` を使います。
 
 ### 語彙の出力先と形式を選択
 
@@ -87,7 +87,7 @@ cp config.example.toml config.toml   # deepseek.api_key を記入
 | `run` | `-y/--yes` / `--no-yes` | `run.yes` | `false` |
 | `run` | `--vocab-output-dir` | `vocabulary.output_dir` | 有効な出力ディレクトリに追随 |
 | `run` | `--vocab-format` | `vocabulary.format` | `both` |
-| `run` | `--highlights` / `--no-highlights` | `highlights.enabled` | `true`（ハイライト生成） |
+| `run` | `--highlights` / `--no-highlights` | `highlights.enabled` | `false`（ハイライト生成しない） |
 | `burn` | 位置引数 inputs | `burn.inputs` | マージ後に必須 |
 | `burn` | `-o/--output-dir` | `burn.output_dir` | マージ後に必須 |
 | `burn` | `-s/--subtitles` | `burn.subtitles` | 明示する字幕ファイルなし |
@@ -194,11 +194,11 @@ uv pip install --python .venv/bin/python --reinstall-package SudachiPy --reinsta
 
 ### ハイライト設定
 
-ハイライトは既定で有効です。プロジェクト直下の `config.toml` の省略時の既定値は次のとおりです。
+ハイライトは既定で無効です。プロジェクト直下の `config.toml` の省略時の既定値は次のとおりです。
 
 ```toml
 [highlights]
-enabled = true
+enabled = false
 target_seconds = 240      # ダイジェストの目標時間（60–900 秒）。通常 180–300 秒に収まる
 intro_start_seconds = 0   # ダイジェスト冒頭に使う元動画の開始位置（秒）
 ja_voice = "Kyoko"        # 日本語サマリーナレーションの macOS `say` の声

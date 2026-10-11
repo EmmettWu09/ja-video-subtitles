@@ -27,7 +27,7 @@ def make_cfg(**overrides):
     values = dict(base_url="https://example.invalid", api_key="sk-" + "x" * 32,
                   model="test", asr_model_id="test", prompt_system="",
                   prompt_user_template=DEFAULT_USER_TEMPLATE, force_style="",
-                  video_bitrate="8M")
+                  video_bitrate="8M", highlights_enabled=True)
     values.update(overrides)
     return Config(**values)
 
@@ -78,10 +78,18 @@ class TestHighlightsSwitch(unittest.TestCase):
         self.load.assert_not_called()
         self.process.assert_not_called()
 
-    def test_default_is_enabled(self):
+    def test_default_is_disabled(self):
         video = self.video()
         self.write_config("")
         code, _, _ = self.invoke_run(video, "-o", self.root / "out")
+        self.assertEqual(code, 0)
+        cfg = self.preflight.call_args.args[2]
+        self.assertIs(cfg.highlights_enabled, False)
+
+    def test_cli_enables_default_disabled(self):
+        video = self.video()
+        self.write_config("")
+        code, _, _ = self.invoke_run(video, "-o", self.root / "out", "--highlights")
         self.assertEqual(code, 0)
         cfg = self.preflight.call_args.args[2]
         self.assertIs(cfg.highlights_enabled, True)
@@ -122,7 +130,7 @@ class TestHighlightsSwitch(unittest.TestCase):
         out = self.root / "out"
         (out / "a").mkdir(parents=True)
         (out / "a" / "a.highlights.mp4").write_bytes(b"old essence")
-        self.write_config("")
+        self.write_config("[highlights]\nenabled = true\n")
         with mock.patch("builtins.input", side_effect=EOFError):
             code, stdout, _ = self.invoke_run(video, "-o", out)
         self.assertEqual(code, 0)
@@ -148,7 +156,7 @@ class TestHighlightsSwitch(unittest.TestCase):
         out = self.root / "out"
         (out / "a").mkdir(parents=True)
         (out / "a" / "a.highlights.mp4").symlink_to(video)
-        self.write_config("")
+        self.write_config("[highlights]\nenabled = true\n")
         code, _, stderr = self.invoke_run(video, "-o", out, "-y")
         self.assertEqual(code, 2)
         self.assertIn("would overwrite", stderr)
@@ -222,6 +230,26 @@ class TestHighlightsStage(unittest.TestCase):
 
 
 class TestHighlightsPreflight(unittest.TestCase):
+    def test_disabled_skips_voice_check(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "out"
+            video = Path(d) / "v.mp4"
+            video.write_bytes(b"v")
+            voices = mock.patch.object(
+                cli.preflight, "check_highlights_voices",
+                return_value=["voice boom"]).start()
+            openai = mock.patch("openai.OpenAI",
+                                side_effect=RuntimeError("offline")).start()
+            self.addCleanup(mock.patch.stopall)
+            for enabled, expected in ((False, 0), (True, 1)):
+                with self.subTest(enabled=enabled):
+                    try:
+                        cli.preflight.run([video], out,
+                                          make_cfg(highlights_enabled=enabled))
+                    except cli.preflight.PreflightError:
+                        pass
+                    self.assertEqual(voices.call_count, expected)
+
     def test_say_missing(self):
         with mock.patch("shutil.which", return_value=None):
             errors = cli.preflight.check_highlights_voices(make_cfg())

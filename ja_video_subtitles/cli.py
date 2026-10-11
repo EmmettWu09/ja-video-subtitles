@@ -611,7 +611,7 @@ def main() -> None:
     highlights_group.add_argument(
         "--highlights", action="store_true", default=None, dest="highlights",
         help="generate lesson highlights after burning (default: "
-             "highlights.enabled in config.toml, or true)")
+             "highlights.enabled in config.toml, or false)")
     highlights_group.add_argument(
         "--no-highlights", action="store_false", dest="highlights",
         help="skip the highlights stage even when highlights.enabled is "

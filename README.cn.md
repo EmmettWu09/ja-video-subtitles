@@ -60,10 +60,10 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 ./ja-video-subtitles run /path/to/dir   -o /path/to/output     # 文件夹批量
 ./ja-video-subtitles run /path/to/dir   -o out -y              # 同名自动覆盖
 ./ja-video-subtitles run xxx.mp4 -o out --force                # 全部重跑
-./ja-video-subtitles run xxx.mp4 -o out --no-highlights        # 跳过课堂高光
+./ja-video-subtitles run xxx.mp4 -o out --highlights           # 生成课堂高光（默认关闭）
 ```
 
-课堂高光默认开启：烧录完成后生成精华视频 `xxx/xxx.highlights.mp4`（与成片 `xxx/xxx.mp4` 并排）和 `xxx/highlights/` 目录（课堂总结与独立高光切片，见「完整流水线的产物与行为」）。单次跳过用 `--no-highlights`；配置 `highlights.enabled = false` 默认关闭；`--highlights` 可单次重新开启。
+课堂高光默认关闭。使用 `--highlights` 或配置 `highlights.enabled = true` 后，烧录完成会生成精华视频 `xxx/xxx.highlights.mp4`（与成片 `xxx/xxx.mp4` 并排）和 `xxx/highlights/` 目录（课堂总结与独立高光切片，见「完整流水线的产物与行为」）。配置开启后想单次跳过可用 `--no-highlights`。
 
 ### 指定词汇目录与格式
 
@@ -90,7 +90,7 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 | `run` | `-y/--yes` / `--no-yes` | `run.yes` | `false` |
 | `run` | `--vocab-output-dir` | `vocabulary.output_dir` | 跟随有效主输出目录 |
 | `run` | `--vocab-format` | `vocabulary.format` | `both` |
-| `run` | `--highlights` / `--no-highlights` | `highlights.enabled` | `true`（默认生成高光） |
+| `run` | `--highlights` / `--no-highlights` | `highlights.enabled` | `false`（默认不生成高光） |
 | `burn` | 位置参数 inputs | `burn.inputs` | 合并后必填 |
 | `burn` | `-o/--output-dir` | `burn.output_dir` | 合并后必填 |
 | `burn` | `-s/--subtitles` | `burn.subtitles` | 无显式字幕文件 |
@@ -197,11 +197,11 @@ uv pip install --python .venv/bin/python --reinstall-package SudachiPy --reinsta
 
 ### 课堂高光配置
 
-高光默认开启。项目根目录 `config.toml` 中的可选配置，默认值如下：
+高光默认关闭。项目根目录 `config.toml` 中的可选配置，默认值如下：
 
 ```toml
 [highlights]
-enabled = true
+enabled = false
 target_seconds = 240      # 精华版目标时长，60–900；通常落在 180–300 秒
 intro_start_seconds = 0   # 精华版片头从源视频该秒数处取连续画面
 ja_voice = "Kyoko"        # 日文摘要配音的 macOS `say` 音色

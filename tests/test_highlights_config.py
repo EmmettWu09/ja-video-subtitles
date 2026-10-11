@@ -34,7 +34,7 @@ class TestHighlightsConfig(unittest.TestCase):
 
     def test_defaults_without_section(self):
         cfg = self.load('[deepseek]\napi_key = "k"\n')
-        self.assertIs(cfg.highlights_enabled, True)
+        self.assertIs(cfg.highlights_enabled, False)
         self.assertEqual(cfg.highlights_target_seconds, 240)
         self.assertEqual(cfg.highlights_intro_start_seconds, 0)
         self.assertEqual(cfg.highlights_ja_voice, "Kyoko")
