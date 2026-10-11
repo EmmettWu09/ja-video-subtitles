@@ -162,6 +162,9 @@ def _replace_rendered(ffmpeg: Path, segments: list[Path], final: Path,
     partial = final.with_name(f".{final.name}.partial.mp4")
     try:
         _concat(segments, partial, ffmpeg, cfg)
+        if not partial.is_file() or partial.stat().st_size == 0:
+            raise RuntimeError(
+                f"ffmpeg reported success but {partial} is missing or empty")
         os.replace(partial, final)
     finally:
         partial.unlink(missing_ok=True)

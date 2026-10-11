@@ -305,6 +305,37 @@ class TestTimeline(unittest.TestCase):
         self.assertFalse(timeline.valid_srt("不是字幕"))
 
 
+class TestRenderReplace(unittest.TestCase):
+    def test_missing_partial_raises_clear_error(self):
+        from unittest import mock
+        from ja_video_subtitles.highlights import render
+        with tempfile.TemporaryDirectory() as d:
+            final = Path(d) / "v.highlights.mp4"
+            with mock.patch.object(render, "_concat", return_value=None):
+                with self.assertRaisesRegex(RuntimeError, "missing or empty"):
+                    render._replace_rendered(Path("ffmpeg"), [Path("s")],
+                                             final, None)
+            self.assertFalse(final.exists())
+            self.assertFalse(
+                (Path(d) / ".v.highlights.mp4.partial.mp4").exists())
+
+    def test_successful_concat_replaces_final(self):
+        from unittest import mock
+        from ja_video_subtitles.highlights import render
+        with tempfile.TemporaryDirectory() as d:
+            final = Path(d) / "v.highlights.mp4"
+
+            def fake_concat(segments, out, ffmpeg, cfg):
+                out.write_bytes(b"rendered")
+
+            with mock.patch.object(render, "_concat", fake_concat):
+                render._replace_rendered(Path("ffmpeg"), [Path("s")],
+                                         final, None)
+            self.assertEqual(final.read_bytes(), b"rendered")
+            self.assertFalse(
+                (Path(d) / ".v.highlights.mp4.partial.mp4").exists())
+
+
 class TestEssencePlan(unittest.TestCase):
     def bound(self, event, start_ms, end_ms):
         return {"event": event, "type": "完整表达", "title_zh": f"事件{event}",
