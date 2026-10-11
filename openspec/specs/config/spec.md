@@ -7,7 +7,7 @@
 
 ### Requirement: 配置文件
 
-配置文件 SHALL 从项目根目录（包所在位置）的 `config.toml` 读取，与命令执行时的当前目录无关。配置项包含 DeepSeek `base_url`（默认 `https://api.deepseek.com`）、`api_key`（无默认值）、`model`（默认 `deepseek-flash`），有内置默认值的翻译 prompt 模板、烧录字幕样式及 `[video] bitrate`（默认 `8M`）。`run` SHALL 要求配置文件存在且 api_key 有效。`burn` SHALL 允许配置文件不存在或缺少/留空 api_key：不存在时使用默认烧录样式和码率，存在时应用烧录相关覆盖项，SHALL NOT 验证或使用翻译 API 配置。无法解析的 TOML 或非法烧录配置 SHALL 在处理前报错。`run` 新增 `[vocabulary]` 配置：`enabled` 默认 true、`learner_level` 默认 `N3`、`include_unknown` 默认 true、`max_examples` 默认 3、`output_dir` 默认空字符串、`format` 默认 `both`。`enabled` 和 `include_unknown` SHALL 仅接受布尔值，`learner_level` SHALL 仅接受 N5/N4/N3/N2/N1，`max_examples` SHALL 仅接受 1 到 10 的整数（布尔值不视为整数）。`output_dir` SHALL 为字符串，空字符串回退到 `-o`；非空路径 SHALL 相对命令执行时的 cwd 解析。`format` SHALL 仅接受 `md`、`json`、`both`。`run --vocab-output-dir` 和 `--vocab-format` 的显式值 SHALL 分别优先于合法配置中的对应值；配置本身 SHALL 先通过类型和枚举校验。`run` 新增 `[highlights]` 配置：`enabled` 默认 true、`target_seconds` 默认 240、`intro_start_seconds` 默认 0、`ja_voice` 默认 `Kyoko`、`zh_voice` 默认 `Tingting`。`highlights.enabled` SHALL 仅接受布尔值；`target_seconds` SHALL 仅接受 60 到 900 的整数（布尔值不视为整数）；`intro_start_seconds` SHALL 仅接受不小于 0 的数值（布尔值不视为数值）；`ja_voice` 与 `zh_voice` SHALL 为非空、非纯空白且不含 NUL（U+0000）的字符串。`run --highlights`/`--no-highlights` 的显式值 SHALL 优先于合法配置中的 `highlights.enabled`；配置本身 SHALL 先通过类型和取值校验。`burn` SHALL 忽略词汇与高光配置，不验证其值或要求相关依赖。
+配置文件 SHALL 从项目根目录（包所在位置）的 `config.toml` 读取，与命令执行时的当前目录无关。配置项包含 DeepSeek `base_url`（默认 `https://api.deepseek.com`）、`api_key`（无默认值）、`model`（默认 `deepseek-flash`），有内置默认值的翻译 prompt 模板、烧录字幕样式及 `[video] bitrate`（默认 `8M`）。`run` SHALL 要求配置文件存在且 api_key 有效。`burn` SHALL 允许配置文件不存在或缺少/留空 api_key：不存在时使用默认烧录样式和码率，存在时应用烧录相关覆盖项，SHALL NOT 验证或使用翻译 API 配置。无法解析的 TOML 或非法烧录配置 SHALL 在处理前报错。`run` 新增 `[vocabulary]` 配置：`enabled` 默认 true、`learner_level` 默认 `N3`、`include_unknown` 默认 true、`max_examples` 默认 3、`output_dir` 默认空字符串、`format` 默认 `both`。`enabled` 和 `include_unknown` SHALL 仅接受布尔值，`learner_level` SHALL 仅接受 N5/N4/N3/N2/N1，`max_examples` SHALL 仅接受 1 到 10 的整数（布尔值不视为整数）。`output_dir` SHALL 为字符串，空字符串回退到 `-o`；非空路径 SHALL 相对命令执行时的 cwd 解析。`format` SHALL 仅接受 `md`、`json`、`both`。`run --vocab-output-dir` 和 `--vocab-format` 的显式值 SHALL 分别优先于合法配置中的对应值；配置本身 SHALL 先通过类型和枚举校验。`run` 新增 `[highlights]` 配置：`enabled` 默认 false、`target_seconds` 默认 240、`intro_start_seconds` 默认 0、`ja_voice` 默认 `Kyoko`、`zh_voice` 默认 `Tingting`。`highlights.enabled` 控制是否输出高光产物，SHALL 仅接受布尔值；`target_seconds` SHALL 仅接受 60 到 900 的整数（布尔值不视为整数）；`intro_start_seconds` SHALL 仅接受不小于 0 的数值（布尔值不视为数值）；`ja_voice` 与 `zh_voice` SHALL 为非空、非纯空白且不含 NUL（U+0000）的字符串。`run --highlights`/`--no-highlights` 的显式值 SHALL 优先于合法配置中的 `highlights.enabled`；配置本身 SHALL 先通过类型和取值校验。`burn` SHALL 忽略词汇与高光配置，不验证其值或要求相关依赖。
 
 #### Scenario: 正常加载
 
@@ -42,7 +42,7 @@
 #### Scenario: 未配置 highlights
 
 - **WHEN** config.toml 没有 `[highlights]`
-- **THEN** 使用 enabled=true、target_seconds=240、intro_start_seconds=0、ja_voice=Kyoko、zh_voice=Tingting，即默认生成高光
+- **THEN** 使用 enabled=false、target_seconds=240、intro_start_seconds=0、ja_voice=Kyoko、zh_voice=Tingting，即默认不输出高光产物
 
 #### Scenario: 非法学习者等级
 
@@ -66,7 +66,7 @@
 
 #### Scenario: 禁用高光功能
 
-- **WHEN** highlights.enabled 为 false 且无 CLI 覆盖
+- **WHEN** highlights.enabled 为 false（含未配置时的默认值）且无 CLI 覆盖
 - **THEN** 不运行高光阶段，也不要求 `say` 命令与音色可用
 
 #### Scenario: 独立烧录忽略词汇设置
@@ -108,7 +108,7 @@
 
 ### Requirement: 词汇输出配置回退
 
-`run` SHALL 分别解析词汇目录和格式，每项按「显式命令行参数 → `config.toml` 的对应配置 → 内置默认值」取值。`--vocab-output-dir` SHALL 仅覆盖 `[vocabulary] output_dir`，`--vocab-format` SHALL 仅覆盖 `[vocabulary] format`。格式默认 `both`，同时输出 Markdown 和 JSON；配置目录为空或缺失时 SHALL 使用 `-o/--output-dir`，即生成的 `<stem>.sub.mp4` 所在目录。示例配置和命令帮助 SHALL 清楚标明该规则。
+`run` SHALL 分别解析词汇目录和格式，每项按「显式命令行参数 → `config.toml` 的对应配置 → 内置默认值」取值。`--vocab-output-dir` SHALL 仅覆盖 `[vocabulary] output_dir`，`--vocab-format` SHALL 仅覆盖 `[vocabulary] format`。格式默认 `both`，同时输出 Markdown 和 JSON；配置目录为空或缺失时 SHALL 使用 `-o/--output-dir`，即最终有效主输出目录（按视频产物位于其下 `<stem>/` 子目录）。示例配置和命令帮助 SHALL 清楚标明该规则。
 
 #### Scenario: 省略两个命令行词汇参数
 
@@ -128,7 +128,7 @@
 #### Scenario: 使用内置默认值
 
 - **WHEN** output_dir 和 format 配置均缺失，且未传两个命令行词汇参数
-- **THEN** 在 -o 目录同时生成 `<stem>.vocab.md`、`<stem>.vocab.json`，与 `<stem>.sub.mp4` 同目录
+- **THEN** 在 -o 目录同时生成 `<stem>.vocab.md`、`<stem>.vocab.json`；字幕、成片等按视频产物位于 `<out>/<stem>/`
 
 ### Requirement: 全部业务参数的配置映射
 
@@ -142,7 +142,7 @@
 | `run` | `-y/--yes/--no-yes` | `run.yes` | `false` |
 | `run` | `--vocab-output-dir` | `vocabulary.output_dir` | 使用最终有效的 `run` 主输出目录 |
 | `run` | `--vocab-format` | `vocabulary.format` | `both` |
-| `run` | `--highlights/--no-highlights` | `highlights.enabled` | `true`（默认生成高光） |
+| `run` | `--highlights/--no-highlights` | `highlights.enabled` | `false`（默认不输出高光产物） |
 | `burn` | 位置参数 `inputs` | `burn.inputs` | 无默认值，合并后必填 |
 | `burn` | `-o/--output-dir` | `burn.output_dir` | 无默认值，合并后必填 |
 | `burn` | `-s/--subtitles` | `burn.subtitles` | 未指定显式字幕文件 |
@@ -164,10 +164,10 @@
 - **WHEN** 合法配置不含 `[run]` 或 `[burn]`，用户通过命令行提供当前命令的完整输入和主输出目录
 - **THEN** 系统使用命令行输入与输出，未指定的布尔选项为 `false`，既有词汇、样式和码率配置继续生效
 
-#### Scenario: 配置关闭默认开启的高光
+#### Scenario: 配置开启默认关闭的高光
 
-- **WHEN** 合法配置提供 `highlights.enabled=false`，用户执行 `run video.mp4 -o out` 且未提供高光开关
-- **THEN** 本次运行不执行高光阶段，行为等同传入 `--no-highlights`
+- **WHEN** 合法配置提供 `highlights.enabled=true`，用户执行 `run video.mp4 -o out` 且未提供高光开关
+- **THEN** 本次运行执行高光阶段，行为等同传入 `--highlights`
 
 ### Requirement: 按显式提供状态解析优先级
 

@@ -7,12 +7,12 @@
 
 ### Requirement: 双语字幕合成
 
-SHALL 按 index 对齐 `xxx.ja.srt` 与 `xxx.zh.srt`，在 `-o` 输出目录生成 `xxx.bilingual.srt`：每条字幕两行，上行日文原文、下行中文译文，时间轴沿用转写结果。中文缺失的条目 SHALL 仅保留日文行，不阻塞合成。`run` 仅在已有双语字幕可解析、非空，且每条字幕的 index、时间轴和内容与当前日文/中文字幕的合成结果一致时 SHALL 复用该文件；源字幕改变或缓存不一致时 SHALL 重新合成后再烧录。独立 `burn` SHALL 继续直接读取所选 SRT，不执行合成或修改字幕。
+SHALL 按 index 对齐 `xxx.ja.srt` 与 `xxx.zh.srt`，在按视频产物目录 `<out>/<stem>/` 生成 `xxx.bilingual.srt`：每条字幕两行，上行日文原文、下行中文译文，时间轴沿用转写结果。中文缺失的条目 SHALL 仅保留日文行，不阻塞合成。`run` 仅在已有双语字幕可解析、非空，且每条字幕的 index、时间轴和内容与当前日文/中文字幕的合成结果一致时 SHALL 复用该文件；源字幕改变或缓存不一致时 SHALL 重新合成后再烧录。独立 `burn` SHALL 继续直接读取所选 SRT，不执行合成或修改字幕。
 
 #### Scenario: 正常合成
 
 - **WHEN** ja/zh 两个字幕文件条数一致
-- **THEN** 输出目录生成条数相同的 `xxx.bilingual.srt`，每条两行
+- **THEN** 按视频产物目录生成条数相同的 `xxx.bilingual.srt`，每条两行
 
 #### Scenario: 修改中文译文后重跑
 
@@ -26,12 +26,12 @@ SHALL 按 index 对齐 `xxx.ja.srt` 与 `xxx.zh.srt`，在 `-o` 输出目录生�
 
 ### Requirement: 烧录输出
 
-SHALL 使用带 libass 的 ffmpeg（`subtitles` 滤镜 + `force_style`）将选定 SRT 硬烧进视频，在 `-o` 输出目录生成 `<stem>.sub.mp4`；视频用 `h264_videotoolbox` 硬件编码，音频直通（`-c:a copy`）。`run` 使用合成的 `<stem>.bilingual.srt`；`burn` 使用已有 SRT，SHALL NOT 执行字幕合成或修改字幕。字幕样式 SHALL 有默认值（PingFang SC、白字黑描边、底部居中）并允许 config 覆盖。烧录过程 SHALL 显示进度条。
+SHALL 使用带 libass 的 ffmpeg（`subtitles` 滤镜 + `force_style`）将选定 SRT 硬烧进视频：`run` 在按视频产物目录 `<out>/<stem>/` 生成 `<stem>.mp4`（原始文件名），`burn` 在 `-o` 输出目录生成 `<stem>.sub.mp4`；视频用 `h264_videotoolbox` 硬件编码，音频直通（`-c:a copy`）。`run` 使用合成的 `<stem>.bilingual.srt`；`burn` 使用已有 SRT，SHALL NOT 执行字幕合成或修改字幕。字幕样式 SHALL 有默认值（PingFang SC、白字黑描边、底部居中）并允许 config 覆盖。烧录过程 SHALL 显示进度条。
 
 #### Scenario: 烧录成功
 
 - **WHEN** `run` 已生成双语字幕且成片确认通过
-- **THEN** 输出可正常播放、画面含双语硬字幕的 `<stem>.sub.mp4`，进度条走满
+- **THEN** 输出可正常播放、画面含双语硬字幕的 `<out>/<stem>/<stem>.mp4`，进度条走满
 
 #### Scenario: 现有字幕烧录成功
 

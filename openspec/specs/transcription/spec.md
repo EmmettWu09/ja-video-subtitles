@@ -5,11 +5,11 @@
 
 ## Requirements
 ### Requirement: 日文转写
-SHALL 使用 faster-whisper 加载日文专用模型 `kotoba-tech/kotoba-whisper-v2.0-faster`（允许 config 覆盖模型 ID），以 `language="ja"` 转写输入视频，在 `-o` 输出目录生成与视频同主名的 `xxx.ja.srt`，并同时输出含每条置信度（avg_logprob、no_speech_prob）的 `xxx.ja.json` 供排查。
+SHALL 使用 faster-whisper 加载日文专用模型 `kotoba-tech/kotoba-whisper-v2.0-faster`（允许 config 覆盖模型 ID），以 `language="ja"` 转写输入视频，在按视频产物目录 `<out>/<stem>/` 生成与视频同主名的 `xxx.ja.srt`，并同时输出含每条置信度（avg_logprob、no_speech_prob）的 `xxx.ja.json` 供排查。
 
 #### Scenario: 转写成功
 - **WHEN** 输入 1 小时日文视频
-- **THEN** 输出目录生成带准确时间轴的 `xxx.ja.srt` 与 `xxx.ja.json`，终端显示转写进度条
+- **THEN** 按视频产物目录生成带准确时间轴的 `xxx.ja.srt` 与 `xxx.ja.json`，终端显示转写进度条
 
 ### Requirement: 幻觉过滤
 SHALL 启用 VAD 过滤与 `condition_on_previous_text=False`，并对转写结果应用规则过滤：高 no_speech_prob 且低 avg_logprob 的片段丢弃；与上一条文本完全重复的片段丢弃。被过滤的条数 SHALL 打印到终端。

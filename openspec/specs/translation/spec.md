@@ -5,11 +5,11 @@
 
 ## Requirements
 ### Requirement: 日译中
-SHALL 通过 config 中的 OpenAI 兼容接口（默认 DeepSeek）将 `xxx.ja.srt` 翻译为简体中文，在 `-o` 输出目录生成与视频同主名的 `xxx.zh.srt`，时间轴与索引 SHALL 与原文逐条一致。
+SHALL 通过 config 中的 OpenAI 兼容接口（默认 DeepSeek）将 `xxx.ja.srt` 翻译为简体中文，在按视频产物目录 `<out>/<stem>/` 生成与视频同主名的 `xxx.zh.srt`，时间轴与索引 SHALL 与原文逐条一致。
 
 #### Scenario: 翻译成功
 - **WHEN** `xxx.ja.srt` 存在且 API 可用
-- **THEN** 输出目录生成条数相同、时间轴相同的 `xxx.zh.srt`，终端按批次显示进度条
+- **THEN** 按视频产物目录生成条数相同、时间轴相同的 `xxx.zh.srt`，终端按批次显示进度条
 
 ### Requirement: 分批与上下文
 翻译 SHALL 分批进行（每批 ≤20 条且原文合计 ≤800 字符），并在每批中附上前一批末尾 2 条原文作为仅供理解的上下文（不翻译、不输出）。

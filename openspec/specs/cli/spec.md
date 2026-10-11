@@ -14,22 +14,22 @@
 
 ### Requirement: 命令结构
 
-CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型）、`run [<视频文件|文件夹>] [-o <输出目录>] [--vocab-output-dir <词汇目录>] [--vocab-format md|json|both] [--force | --no-force] [-y | --no-yes] [--highlights | --no-highlights]`（执行日文转写、翻译、可配置词汇阶段、双语合成、烧录、MP3 导出和可配置高光阶段流水线）以及 `burn [<input> ...] [-o <输出目录>] [-s <字幕文件> | --subtitle-dir <字幕目录>] [-y | --no-yes]`（将现有 SRT 烧录进视频）。输入支持 mp4/mov 容器，成片统一输出 mp4。`run` 与 `burn` 的输入及 `-o/--output-dir` SHALL 允许从各自配置补齐；合并后输入和主输出目录 SHALL 必须存在有效值，无默认路径。显式 CLI 优先于配置，配置缺失时才使用既有内置默认值；完整映射及例外见 config 规格。后续规格中的 `-o`、`<out>` 和 `<output-dir>` 均 SHALL 指代本次合并后的有效主输出目录。字幕、成片、MP3、日志和报告 SHALL 写入该目录，词汇产物 SHALL 写入有效词汇目录，SHALL NOT 修改源视频。`run` 的 vocabulary 阶段 SHALL 在翻译后、双语合成前执行；启用时 SHALL 按 `md`、`json`、`both` 在有效词汇目录生成对应的 `<stem>.vocab.md` 和/或 `<stem>.vocab.json`，默认两种格式均输出到 `-o`。`run` SHALL 在烧录成功后导出 `<output-dir>/<stem>.mp3`。`run` 在最终有效高光开关为 true 时 SHALL 在烧录成功后执行高光阶段，高光产物 SHALL 写入 `<output-dir>/<stem>.highlights/`，布局与内容见 highlights 规格；为 false 时 SHALL NOT 创建高光目录或执行高光阶段。`--highlights` 与 `--no-highlights` SHALL 构成正反互斥开关，同时出现 SHALL 报错。`burn` SHALL NOT 执行转写、翻译、词汇提取、双语合成、MP3 导出或高光阶段，SHALL NOT 接受高光参数。
+CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型）、`run [<视频文件|文件夹>] [-o <输出目录>] [--vocab-output-dir <词汇目录>] [--vocab-format md|json|both] [--force | --no-force] [-y | --no-yes] [--highlights | --no-highlights]`（执行日文转写、翻译、可配置词汇阶段、双语合成、烧录、MP3 导出和可配置高光阶段流水线）以及 `burn [<input> ...] [-o <输出目录>] [-s <字幕文件> | --subtitle-dir <字幕目录>] [-y | --no-yes]`（将现有 SRT 烧录进视频）。输入支持 mp4/mov 容器，成片统一输出 mp4。`run` 与 `burn` 的输入及 `-o/--output-dir` SHALL 允许从各自配置补齐；合并后输入和主输出目录 SHALL 必须存在有效值，无默认路径。显式 CLI 优先于配置，配置缺失时才使用既有内置默认值；完整映射及例外见 config 规格。后续规格中的 `-o`、`<out>` 和 `<output-dir>` 均 SHALL 指代本次合并后的有效主输出目录。`run` 的按视频产物 SHALL 写入按视频产物目录 `<out>/<stem>/`（一个视频一个文件夹，文件夹名为原始视频主干名）：字幕 `<stem>.ja.srt`、`.ja.json`、`.zh.srt`、`.bilingual.srt`，烧录成片 `<stem>.mp4`（使用原始文件名），MP3 `<stem>.mp3`，精华视频 `<stem>.highlights.mp4`；日志 `run.log` 与报告 `report-<时间戳>.md` SHALL 写入主输出目录根，SHALL NOT 移入视频文件夹。词汇产物 SHALL 写入有效词汇目录，SHALL NOT 修改源视频。`run` 的 vocabulary 阶段 SHALL 在翻译后、双语合成前执行；启用时 SHALL 按 `md`、`json`、`both` 在有效词汇目录生成对应的 `<stem>.vocab.md` 和/或 `<stem>.vocab.json`，默认两种格式均输出到 `-o`。`run` SHALL 在烧录成功后导出 `<out>/<stem>/<stem>.mp3`。`run` 在最终有效高光开关为 true 时 SHALL 在烧录成功后执行高光阶段，精华视频 SHALL 输出为 `<out>/<stem>/<stem>.highlights.mp4`（与烧录成片并排，SHALL NOT 放在 highlights 子目录内），其余高光产物 SHALL 写入 `<out>/<stem>/highlights/`，布局与内容见 highlights 规格；最终有效高光开关默认为 false（未配置 `highlights.enabled` 且未传 CLI 开关），此时 SHALL NOT 创建 highlights 目录、生成 `<stem>.highlights.mp4` 或执行高光阶段。`--highlights` 与 `--no-highlights` SHALL 构成正反互斥开关，同时出现 SHALL 报错。`burn` SHALL NOT 执行转写、翻译、词汇提取、双语合成、MP3 导出或高光阶段，SHALL NOT 接受高光参数；`burn` 的产物布局保持 `<out>/<stem>.sub.mp4` 不变。重跑时 SHALL 直接覆盖已存在的同名产物（经既有覆盖确认或自动覆盖机制），SHALL NOT 为避免重名而改用派生文件名；旧版平铺布局的遗留产物 SHALL NOT 参与复用，也 SHALL NOT 被自动删除或迁移。
 
 #### Scenario: 单文件处理
 
-- **WHEN** 执行 `ja-video-subtitles run /path/to/xxx.mp4 -o /path/to/out`、词汇目录与格式使用内置默认值、高光开关使用默认值且预检通过
-- **THEN** 依次执行转写、翻译、启用的词汇阶段、双语合成、烧录、MP3 导出和高光阶段，产物为输出目录内的 `xxx.ja.srt`、`xxx.zh.srt`、`xxx.bilingual.srt`、`xxx.sub.mp4`、`xxx.mp3` 和 `xxx.highlights/`，词汇启用时增加 `xxx.vocab.md` 和 `xxx.vocab.json`，源目录无新增文件
+- **WHEN** 执行 `ja-video-subtitles run /path/to/xxx.mp4 -o /path/to/out`、词汇目录与格式使用内置默认值、未配置也未传入高光开关且预检通过
+- **THEN** 依次执行转写、翻译、启用的词汇阶段、双语合成、烧录和 MP3 导出，产物为 `out/xxx/` 内的 `xxx.ja.srt`、`xxx.zh.srt`、`xxx.bilingual.srt`、`xxx.mp4`、`xxx.mp3`，词汇启用时在有效词汇目录增加 `xxx.vocab.md` 和 `xxx.vocab.json`，`run.log` 与报告位于 `out` 根；不执行高光阶段、不创建 `out/xxx/highlights/`、不生成 `xxx.highlights.mp4`，源目录无新增文件
 
 #### Scenario: 文件夹批量
 
 - **WHEN** 执行 `ja-video-subtitles run /path/to/dir -o /path/to/out`
-- **THEN** 串行处理目录中的 mp4/mov，单个失败不阻塞其余视频，并打印 succeeded/partial/failed/skipped 汇总
+- **THEN** 串行处理目录中的 mp4/mov，每个视频的产物分别写入 `out/<stem>/`，单个失败不阻塞其余视频，并打印 succeeded/partial/failed/skipped 汇总
 
 #### Scenario: 单文件独立烧录
 
 - **WHEN** 执行 `ja-video-subtitles burn xxx.mp4 -s edited.srt -o out`
-- **THEN** 仅将现有 `edited.srt` 烧录到 `out/xxx.sub.mp4`，不生成或修改任何字幕文件
+- **THEN** 仅将现有 `edited.srt` 烧录到 `out/xxx.sub.mp4`，不生成或修改任何字幕文件，不创建按视频文件夹
 
 #### Scenario: 参数非法
 
@@ -39,12 +39,12 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 #### Scenario: 启用词汇功能
 
 - **WHEN** 用户执行 `ja-video-subtitles run video.mp4 -o out` 且 vocabulary.enabled 为 true，词汇目录与格式使用内置默认值
-- **THEN** 翻译后提取词汇，默认输出目录包含词汇 Markdown、结构化 JSON、字幕、成片和 MP3
+- **THEN** 翻译后提取词汇，主输出目录包含词汇 Markdown、结构化 JSON，视频文件夹包含字幕、成片和 MP3
 
 #### Scenario: 自定义词汇目录和单格式
 
 - **WHEN** 执行 `run video.mp4 -o media --vocab-output-dir words --vocab-format json` 且词汇已启用
-- **THEN** 词汇仅写入 `words/video.vocab.json`，不新建 Markdown，字幕、MP3、成片、日志与报告仍写入 `media`
+- **THEN** 词汇仅写入 `words/video.vocab.json`，不新建 Markdown，字幕、MP3、成片、日志与报告仍写入 `media`（按视频产物在 `media/video/`）
 
 #### Scenario: 词汇格式参数非法
 
@@ -56,20 +56,35 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 - **WHEN** vocabulary.enabled 为 false，但命令包含合法词汇目录和格式参数
 - **THEN** 不创建词汇目录、不生成词汇文件，正常生成字幕、成片和 MP3
 
-#### Scenario: 默认生成高光
+#### Scenario: 默认不输出高光产物
 
 - **WHEN** 执行 `run video.mp4 -o out`，未提供高光开关且配置未设置 highlights.enabled
-- **THEN** 烧录成功后执行高光阶段，高光产物写入 `out/video.highlights/`
+- **THEN** 不执行高光阶段、不创建 `out/video/highlights/`、不生成 `video.highlights.mp4`，其余产物正常写入 `out/video/`
 
-#### Scenario: 命令行关闭默认开启的高光
+#### Scenario: 命令行开启默认关闭的高光
 
-- **WHEN** 配置未设置 highlights.enabled，用户执行 `run video.mp4 -o out --no-highlights`
-- **THEN** 不执行高光阶段、不创建 `video.highlights/`，其余产物正常生成
+- **WHEN** 配置未设置 highlights.enabled，用户执行 `run video.mp4 -o out --highlights`
+- **THEN** 烧录成功后执行高光阶段，精华视频输出为 `out/video/video.highlights.mp4`，其余高光产物写入 `out/video/highlights/`
+
+#### Scenario: 命令行关闭配置开启的高光
+
+- **WHEN** 配置 highlights.enabled=true，用户执行 `run video.mp4 -o out --no-highlights`
+- **THEN** 不执行高光阶段、不创建 highlights 目录，其余产物正常写入 `out/video/`
 
 #### Scenario: 命令行开启配置关闭的高光
 
 - **WHEN** 配置 highlights.enabled=false，用户执行 `run video.mp4 -o out --highlights`
 - **THEN** 执行高光阶段，显式 CLI 值优先于配置
+
+#### Scenario: 重跑覆盖同名产物
+
+- **WHEN** `out/video/` 中已存在上次运行的 `video.mp4`、`video.highlights.mp4` 等产物，覆盖已获准（确认、`-y` 或 `--force`）
+- **THEN** 新产物直接覆盖同名旧文件，不生成派生文件名
+
+#### Scenario: 旧平铺布局产物不复用
+
+- **WHEN** 主输出目录根存在旧版布局的 `video.ja.srt`、`video.sub.mp4` 等平铺产物
+- **THEN** 各阶段按新布局重新生成到 `out/video/`，旧文件保留原处不被删除或移动
 
 #### Scenario: 独立烧录拒绝高光参数
 
@@ -78,13 +93,13 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 
 #### Scenario: 完整流水线输出冲突
 
-- **WHEN** 不同输入视频主干名经规范化后相同，或计划输出路径（含高光产物路径）之间冲突、可能覆盖源视频
+- **WHEN** 不同输入视频主干名经规范化后相同，或计划输出路径（含按视频产物目录与高光产物路径）之间冲突、可能覆盖源视频
 - **THEN** 在处理前拒绝整批请求并给出冲突路径，退出码为 2
 
 #### Scenario: 只用配置启动完整流水线
 
 - **WHEN** 合法配置给出 `run.input="video.mp4"` 和 `run.output_dir="media"`，词汇与高光使用内置默认值，用户执行 `ja-video-subtitles run` 且预检通过
-- **THEN** 对 video.mp4 执行完整流水线，字幕、成片、MP3、词汇、高光产物、日志和报告均写入 media，行为等同显式传入这两个路径
+- **THEN** 对 video.mp4 执行除高光外的完整流水线，按视频产物写入 `media/video/`，词汇写入有效词汇目录，日志和报告写入 `media` 根，行为等同显式传入这两个路径
 
 #### Scenario: 只用配置启动独立烧录
 
@@ -116,7 +131,7 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 
 ### Requirement: 启动预检
 
-`run` SHALL 保留完整预检：Python 环境与必需包、带 subtitles 滤镜及 MP3 编码器的 ffmpeg 和 ffprobe、config.toml 存在且 api_key 有效、DeepSeek API 连通、ASR 模型已就绪、磁盘空间充足（≥ 视频总大小 × 2）、输出目录已创建且可写。`burn` SHALL 仅检查 macOS 平台、烧录需要的 Python 环境与包、ffmpeg/libass 与 ffprobe、磁盘空间（≥ 去重后视频总大小 × 2）及输出目录可写性，SHALL NOT 检查或初始化翻译 API、ASR 模型、词汇分词器及其词典或 JLPT 数据。`run` 在 vocabulary.enabled 为 true 时 SHALL 额外创建并检查有效词汇目录可写，验证形态分析依赖、本地形态词典及 JLPT 数据的 schema、版本和校验和；任一缺失或损坏 SHALL 在处理前失败并给出修复指引。词汇功能禁用时 SHALL 跳过词汇相关目录创建与检查。`run` 在最终有效高光开关为 true 时 SHALL 额外检查 macOS `say` 命令存在，且 `highlights.ja_voice` 与 `highlights.zh_voice` 配置的音色在可用声音列表中；缺失时 SHALL 在处理前失败并给出修复指引（更换音色或关闭高光）。高光关闭时 SHALL 跳过 `say` 与音色检查。全部字幕映射与预检 SHALL 在任一视频烧录前完成。
+`run` SHALL 保留完整预检：Python 环境与必需包、带 subtitles 滤镜及 MP3 编码器的 ffmpeg 和 ffprobe、config.toml 存在且 api_key 有效、DeepSeek API 连通、ASR 模型已就绪、磁盘空间充足（≥ 视频总大小 × 2）、主输出目录及每个视频的按视频产物目录 `<out>/<stem>/` 已创建且可写。`burn` SHALL 仅检查 macOS 平台、烧录需要的 Python 环境与包、ffmpeg/libass 与 ffprobe、磁盘空间（≥ 去重后视频总大小 × 2）及输出目录可写性，SHALL NOT 检查或初始化翻译 API、ASR 模型、词汇分词器及其词典或 JLPT 数据。`run` 在 vocabulary.enabled 为 true 时 SHALL 额外创建并检查有效词汇目录可写，验证形态分析依赖、本地形态词典及 JLPT 数据的 schema、版本和校验和；任一缺失或损坏 SHALL 在处理前失败并给出修复指引。词汇功能禁用时 SHALL 跳过词汇相关目录创建与检查。`run` 在最终有效高光开关为 true 时 SHALL 额外检查 macOS `say` 命令存在，且 `highlights.ja_voice` 与 `highlights.zh_voice` 配置的音色在可用声音列表中；缺失时 SHALL 在处理前失败并给出修复指引（更换音色或关闭高光）。高光关闭时 SHALL 跳过 `say` 与音色检查。全部字幕映射与预检 SHALL 在任一视频烧录前完成。
 
 #### Scenario: 预检失败
 
@@ -163,9 +178,14 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 - **WHEN** 最终有效高光开关为 false，或执行独立 `burn`
 - **THEN** 不检查 `say` 命令与音色，继续其余预检
 
+#### Scenario: 按视频产物目录不可用
+
+- **WHEN** 任一 `<out>/<stem>/` 是普通文件、不能创建或不可写
+- **THEN** 在视频处理前失败，指出对应路径，退出码为 2
+
 ### Requirement: 同名成片确认
 
-`run` 与 `burn` 在预检通过后、开始处理前 SHALL 统一检查每个视频的 `<stem>.sub.mp4`；`run` SHALL 同时检查 `<stem>.mp3`，并在最终有效高光开关为 true 时同时检查 `<stem>.highlights/highlights.mp4`。任一目标存在都 SHALL 纳入该视频的覆盖确认。自动覆盖 SHALL 使用合并后的有效值：`run` 为 `yes OR force`，`burn` 为 `yes`。已存在且未启用自动覆盖时 SHALL 逐个提示覆盖或跳过；配置或 CLI 开启的 force 均具有自动覆盖语义。全部确认 SHALL 在处理开始前完成，烧录过程 SHALL NOT 中断等待输入；未确认的视频 SHALL 整体跳过，保留该视频已有成片、MP3 与高光产物。`burn` 不提供 `--force` 或 `--no-force`。显式 `--no-yes` SHALL 只关闭 yes，不能抵消仍为 true 的 force；`--no-force` SHALL 只关闭 force，不能抵消仍为 true 的 yes。任何自动覆盖选项 SHALL NOT 绕过输入、字幕或输出路径冲突校验。
+`run` 与 `burn` 在预检通过后、开始处理前 SHALL 统一检查每个视频的成片（`run` 为 `<out>/<stem>/<stem>.mp4`，`burn` 为 `<out>/<stem>.sub.mp4`）；`run` SHALL 同时检查 `<out>/<stem>/<stem>.mp3`，并在最终有效高光开关为 true 时同时检查 `<out>/<stem>/<stem>.highlights.mp4`。任一目标存在都 SHALL 纳入该视频的覆盖确认。自动覆盖 SHALL 使用合并后的有效值：`run` 为 `yes OR force`，`burn` 为 `yes`。已存在且未启用自动覆盖时 SHALL 逐个提示覆盖或跳过；配置或 CLI 开启的 force 均具有自动覆盖语义。全部确认 SHALL 在处理开始前完成，烧录过程 SHALL NOT 中断等待输入；未确认的视频 SHALL 整体跳过，保留该视频已有成片、MP3 与高光产物。`burn` 不提供 `--force` 或 `--no-force`。显式 `--no-yes` SHALL 只关闭 yes，不能抵消仍为 true 的 force；`--no-force` SHALL 只关闭 force，不能抵消仍为 true 的 yes。任何自动覆盖选项 SHALL NOT 绕过输入、字幕或输出路径冲突校验。
 
 #### Scenario: 同名文件选择覆盖
 
@@ -189,12 +209,12 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 
 #### Scenario: 只有同名音频
 
-- **WHEN** `run` 目标目录仅存在 `<stem>.mp3`，有效 yes 和 force 均为 false
+- **WHEN** `run` 的按视频产物目录仅存在 `<stem>.mp3`，有效 yes 和 force 均为 false
 - **THEN** 同样在处理前提示覆盖或跳过；拒绝或 EOF 时跳过该视频且保留旧 MP3
 
 #### Scenario: 只有同名高光精华视频
 
-- **WHEN** `run` 目标目录仅存在 `<stem>.highlights/highlights.mp4`，高光启用，有效 yes 和 force 均为 false
+- **WHEN** `run` 的按视频产物目录仅存在 `<stem>.highlights.mp4`，高光启用，有效 yes 和 force 均为 false
 - **THEN** 同样在处理前提示覆盖或跳过；拒绝或 EOF 时跳过该视频且保留既有高光产物
 
 #### Scenario: 自动覆盖成片与音频
@@ -233,12 +253,12 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 
 ### Requirement: 运行报告
 
-`run` 与 `burn` 结束时 SHALL 在输出目录生成 `report-<时间戳>.md`，包含开始/结束时间与总耗时、工具版本、配置摘要、成功/失败/跳过汇总；`run` 另包含 partial 数量，以及每个视频的实际阶段耗时、失败原因和产物清单。`run` 配置摘要包含 ASR 模型、翻译模型与 base_url、烧录码率、有效词汇输出目录和格式，以及高光开关有效值与（启用时）目标时长、片头起点和音色配置。`burn` SHALL 明确标记 burn-only，并将模型及翻译服务标记为 N/A，列出实际字幕输入与成片，不得将未执行的转写/翻译/合成阶段显示为成功。`run` 报告 SHALL 记录 Vocabulary 阶段耗时、词汇产物、目标词总数、N2/N1/未分级及释义降级数量；词汇阶段级失败 SHALL 记录错误和 partial 状态。词汇产物 SHALL 按本次启用状态、所选格式和实际目录列举，SHALL NOT 将未选中的历史词汇文件列为本次产物。`run` SHALL 记录音频阶段耗时、成功导出的 MP3 路径及音频错误；音频失败 SHALL 标记 partial，不得将遗留旧 MP3 报为成功导出。词汇和音频同时失败时 SHALL 保留两者原因。`run` 在高光启用时 SHALL 记录高光阶段状态与耗时、切片数量、精华视频实际时长、高光产物路径及错误原因；高光阶段级失败 SHALL 记录错误和 partial 状态；高光关闭时报告 SHALL NOT 显示高光阶段。`burn` 报告 SHALL NOT 显示未执行的音频或高光阶段。`run` 中任何视频为 partial 或 failed 时，退出码 SHALL 为 1；其余成功或跳过时 SHALL 为 0。单词级释义降级不改变视频成功状态，SHALL 保留 warning 和降级计数。报告 SHALL NOT 包含 api_key。
+`run` 与 `burn` 结束时 SHALL 在主输出目录根生成 `report-<时间戳>.md`，包含开始/结束时间与总耗时、工具版本、配置摘要、成功/失败/跳过汇总；`run` 另包含 partial 数量，以及每个视频的实际阶段耗时、失败原因和产物清单。`run` 配置摘要包含 ASR 模型、翻译模型与 base_url、烧录码率、有效词汇输出目录和格式，以及高光开关有效值与（启用时）目标时长、片头起点和音色配置。`burn` SHALL 明确标记 burn-only，并将模型及翻译服务标记为 N/A，列出实际字幕输入与成片，不得将未执行的转写/翻译/合成阶段显示为成功。`run` 报告 SHALL 记录 Vocabulary 阶段耗时、词汇产物、目标词总数、N2/N1/未分级及释义降级数量；词汇阶段级失败 SHALL 记录错误和 partial 状态。词汇产物 SHALL 按本次启用状态、所选格式和实际目录列举，SHALL NOT 将未选中的历史词汇文件列为本次产物。`run` SHALL 记录音频阶段耗时、成功导出的 MP3 路径及音频错误；音频失败 SHALL 标记 partial，不得将遗留旧 MP3 报为成功导出。词汇和音频同时失败时 SHALL 保留两者原因。`run` 在高光启用时 SHALL 记录高光阶段状态与耗时、切片数量、精华视频实际时长、高光产物路径及错误原因；高光阶段级失败 SHALL 记录错误和 partial 状态；高光关闭时报告 SHALL NOT 显示高光阶段。`burn` 报告 SHALL NOT 显示未执行的音频或高光阶段。按视频产物（字幕、成片、MP3、精华视频、高光目录）SHALL 按 `<out>/<stem>/` 的实际路径列举。`run` 中任何视频为 partial 或 failed 时，退出码 SHALL 为 1；其余成功或跳过时 SHALL 为 0。单词级释义降级不改变视频成功状态，SHALL 保留 warning 和降级计数。报告 SHALL NOT 包含 api_key。
 
 #### Scenario: 生成报告
 
 - **WHEN** `run` 处理完所有视频
-- **THEN** 输出目录生成包含配置摘要、阶段耗时、产物和汇总且不含密钥的报告
+- **THEN** 主输出目录根生成包含配置摘要、阶段耗时、产物和汇总且不含密钥的报告，按视频产物列出来自 `<out>/<stem>/` 的实际路径
 
 #### Scenario: 独立烧录报告
 
@@ -258,7 +278,7 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 #### Scenario: 高光成功记录
 
 - **WHEN** 高光阶段成功
-- **THEN** 报告记录高光耗时、切片数量、精华实际时长与 `highlights.mp4` 等产物路径
+- **THEN** 报告记录高光耗时、切片数量、精华实际时长与 `<stem>.highlights.mp4` 等产物路径
 
 #### Scenario: 高光关闭不显示阶段
 
@@ -273,7 +293,7 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 #### Scenario: 独立目录与历史格式
 
 - **WHEN** 本次只选 `md` 并输出到词汇目录，主输出目录或词汇目录存在旧 JSON
-- **THEN** 报告列出真实 Markdown 路径及 md 格式，不列旧 JSON；字幕、视频和成功导出的 MP3 路径仍来自 `-o`
+- **THEN** 报告列出真实 Markdown 路径及 md 格式，不列旧 JSON；字幕、视频和成功导出的 MP3 路径仍来自 `<out>/<stem>/`
 
 #### Scenario: 音频阶段失败
 
@@ -282,11 +302,11 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 
 ### Requirement: 产物复用与强制重跑
 
-在最终有效 force 为 false 时，输出目录中中间产物（`xxx.ja.srt`、`xxx.zh.srt`、`xxx.bilingual.srt`）已存在时，对应阶段 SHALL 默认复用合法且满足新鲜度要求的产物（不询问）；产物无法解析或为空时 SHALL 视为损坏并重跑该阶段。日文、中文字幕有效时 SHALL 保留，双语字幕仅在其 index、时间轴和内容与当前日文/中文字幕的合成结果一致时 SHALL 复用，否则重新合成。启用的词汇阶段 SHALL 仅在当前选择的词汇产物合法且源字幕、学习者设置和数据版本等元数据一致时跳过；所选文件需补齐时 MAY 使用有效结构化缓存生成对应格式，无需重新调用释义 API，未选文件不作必需条件，详见 vocabulary 规格。启用的高光阶段 SHALL 按 highlights 规格的断点恢复与缓存规则复用已完成阶段产物：源视频、双语字幕内容、翻译模型、音色、目标时长、片头起点及提示词版本未变化时跳过对应阶段，任一变化仅重跑受影响阶段及下游。最终有效 force 为 true 时（由 `--force` 或 `run.force=true` 提供）SHALL 强制全部阶段重跑并覆盖当前运行所选的同名产物（不再询问），SHALL NOT 删除或改写未选中的词汇格式。已确认处理的视频 SHALL 重新从源视频导出 MP3，不因旧 MP3 存在而无条件复用。独立 `burn` 只读取现有字幕，不适用此流水线复用或重生成逻辑。
+在最终有效 force 为 false 时，按视频产物目录 `<out>/<stem>/` 中中间产物（`<stem>.ja.srt`、`<stem>.zh.srt`、`<stem>.bilingual.srt`）已存在时，对应阶段 SHALL 默认复用合法且满足新鲜度要求的产物（不询问）；产物无法解析或为空时 SHALL 视为损坏并重跑该阶段。日文、中文字幕有效时 SHALL 保留，双语字幕仅在其 index、时间轴和内容与当前日文/中文字幕的合成结果一致时 SHALL 复用，否则重新合成。启用的词汇阶段 SHALL 仅在当前选择的词汇产物合法且源字幕、学习者设置和数据版本等元数据一致时跳过；所选文件需补齐时 MAY 使用有效结构化缓存生成对应格式，无需重新调用释义 API，未选文件不作必需条件，详见 vocabulary 规格。启用的高光阶段 SHALL 按 highlights 规格的断点恢复与缓存规则复用已完成阶段产物：源视频、双语字幕内容、翻译模型、音色、目标时长、片头起点及提示词版本未变化时跳过对应阶段，任一变化仅重跑受影响阶段及下游。最终有效 force 为 true 时（由 `--force` 或 `run.force=true` 提供）SHALL 强制全部阶段重跑并覆盖当前运行所选的同名产物（不再询问），SHALL NOT 删除或改写未选中的词汇格式。已确认处理的视频 SHALL 重新从源视频导出 MP3，不因旧 MP3 存在而无条件复用。旧版平铺布局（主输出目录根的 `<stem>.ja.srt`、`<stem>.sub.mp4` 等）的遗留产物 SHALL NOT 参与复用，各阶段按新布局重新生成，旧文件保留原处。独立 `burn` 只读取现有字幕，不适用此流水线复用或重生成逻辑。
 
 #### Scenario: 断点续跑
 
-- **WHEN** 上次运行在翻译阶段失败，输出目录已有 `xxx.ja.srt`，用户修复后再次执行同一命令且有效 force=false
+- **WHEN** 上次运行在翻译阶段失败，`out/xxx/` 已有 `xxx.ja.srt`，用户修复后再次执行同一命令且有效 force=false
 - **THEN** 跳过转写，从翻译继续
 
 #### Scenario: 高光断点续跑
@@ -301,8 +321,13 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 
 #### Scenario: 合法但过期的双语字幕
 
-- **WHEN** `xxx.bilingual.srt` 可以解析但与当前日文/中文字幕的合成结果不同
+- **WHEN** `<out>/xxx/xxx.bilingual.srt` 可以解析但与当前日文/中文字幕的合成结果不同
 - **THEN** 重新合成并烧录更新后的双语字幕，不仅因缓存可解析就跳过合成
+
+#### Scenario: 旧平铺产物触发重生成
+
+- **WHEN** 主输出目录根存在旧版 `xxx.ja.srt`、`xxx.zh.srt`，`out/xxx/` 不存在
+- **THEN** 按新布局重新执行各阶段，产物写入 `out/xxx/`，旧文件保留
 
 #### Scenario: 配置强制重跑与 CLI 等效
 
@@ -311,7 +336,7 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 
 #### Scenario: 临时关闭配置中的强制重跑
 
-- **WHEN** run.force=true，用户提供 --no-force，输出目录已有合法且新鲜的中间产物，并已确认处理视频
+- **WHEN** run.force=true，用户提供 --no-force，按视频产物目录已有合法且新鲜的中间产物，并已确认处理视频
 - **THEN** 复用适用中间产物，按既有规则处理成片和 MP3
 
 ### Requirement: 独立烧录多输入展开
@@ -359,7 +384,7 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 #### Scenario: 形态分析阶段异常
 
 - **WHEN** 日文和中文字幕已生成，但 vocabulary 阶段抛出异常
-- **THEN** 系统记录词汇失败，仍生成 bilingual.srt 和 sub.mp4，并把该视频标为 partial
+- **THEN** 系统记录词汇失败，仍生成 `<stem>.bilingual.srt` 和 `<stem>.mp4`，并把该视频标为 partial
 
 ### Requirement: 参数合并先于路径访问和处理副作用
 
@@ -382,7 +407,7 @@ CLI 命令为 `ja-video-subtitles`，SHALL 提供 `download`（下载 ASR 模型
 
 ### Requirement: 参数帮助与配置示例
 
-CLI 帮助、`config.example.toml` 和三个语言版本的 README SHALL 列出业务参数与配置键映射（含 `--highlights`/`--no-highlights` 与 `[highlights]` 配置键），说明 CLI、配置、默认值的顺序、合并后必需项、相对路径基准、字幕来源按组覆盖及布尔否定开关，并明确高光默认开启及其关闭方式。示例配置的输入、输出及字幕路径 SHALL 使用注释示例，force 和 yes SHALL 默认为 false。文档 SHALL 说明配置开启 force/yes 与对应 CLI 开关具有相同重跑及覆盖行为。帮助和版本请求 SHALL 不读取配置，也不依赖有效输入、输出、API 密钥或模型。
+CLI 帮助、`config.example.toml` 和三个语言版本的 README SHALL 列出业务参数与配置键映射（含 `--highlights`/`--no-highlights` 与 `[highlights]` 配置键），说明 CLI、配置、默认值的顺序、合并后必需项、相对路径基准、字幕来源按组覆盖及布尔否定开关，并明确高光默认关闭及其开启方式（`--highlights` 或 `highlights.enabled=true`）。示例配置的输入、输出及字幕路径 SHALL 使用注释示例，force 和 yes SHALL 默认为 false。文档 SHALL 说明配置开启 force/yes 与对应 CLI 开关具有相同重跑及覆盖行为。帮助和版本请求 SHALL 不读取配置，也不依赖有效输入、输出、API 密钥或模型。
 
 #### Scenario: 无配置查看帮助和版本
 
@@ -392,4 +417,4 @@ CLI 帮助、`config.example.toml` 和三个语言版本的 README SHALL 列出�
 #### Scenario: 用户查阅纯配置使用示例
 
 - **WHEN** 用户查看模板和 README
-- **THEN** 能找到配置输入与输出后直接执行 run/burn、只用 CLI 覆盖单项、关闭配置开关（含关闭高光）以及切换字幕来源的示例
+- **THEN** 能找到配置输入与输出后直接执行 run/burn、只用 CLI 覆盖单项、开启或关闭配置开关（含开启高光）以及切换字幕来源的示例
