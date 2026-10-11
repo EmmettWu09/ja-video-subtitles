@@ -4,12 +4,15 @@ Runs after burn inside `run`; the essence video lands next to the burned
 video at ``<video_dir>/<stem>.highlights.mp4`` and everything else under
 ``<video_dir>/highlights/``. Stage-level failures propagate to the caller;
 essence-only failures degrade to ``essence_incomplete`` while keeping clips.
+With ``highlights.keep_artifacts=false`` (the default) a fully successful run
+removes the highlights directory and only the essence video remains.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -134,7 +137,9 @@ def generate(video: Path, ja_srt: Path, zh_srt: Path, video_dir: Path,
     The essence video is written to ``video_dir/<stem>.highlights.mp4``;
     all other artifacts go to ``video_dir/highlights/``. Prerequisite-stage
     failures (transcript/analysis/clips) raise. Essence failures
-    (plan/TTS/render) keep clips and return essence_incomplete.
+    (plan/TTS/render) keep clips and return essence_incomplete. After a
+    fully successful run, ``cfg.highlights_keep_artifacts=False`` removes
+    the highlights directory (``output_dir`` then no longer exists).
     """
     hdir = highlights_dir(video_dir)
     for sub in ("analysis/raw", "plans", "clips", "subtitles/clips", "tts",
@@ -293,6 +298,14 @@ def generate(video: Path, ja_srt: Path, zh_srt: Path, video_dir: Path,
         if report.get("anomalies"):
             print(f"[highlights] check: {len(report['anomalies'])} "
                   "anomalie(s) recorded in report.json")
+
+        # 10. Artifact recycling: with keep_artifacts=false only the essence
+        # video remains. An incomplete essence keeps the directory so the
+        # next run can resume from the failed stage.
+        if not essence_incomplete and not cfg.highlights_keep_artifacts:
+            shutil.rmtree(hdir)
+            print("[highlights] artifacts removed "
+                  "(highlights.keep_artifacts=false)")
     finally:
         if owned_client is not None:
             owned_client.close()

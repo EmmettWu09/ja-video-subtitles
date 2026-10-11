@@ -63,7 +63,7 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 ./ja-video-subtitles run xxx.mp4 -o out --highlights           # 生成课堂高光（默认关闭）
 ```
 
-课堂高光默认关闭。使用 `--highlights` 或配置 `highlights.enabled = true` 后，烧录完成会生成精华视频 `xxx/xxx.highlights.mp4`（与成片 `xxx/xxx.mp4` 并排）和 `xxx/highlights/` 目录（课堂总结与独立高光切片，见「完整流水线的产物与行为」）。配置开启后想单次跳过可用 `--no-highlights`。
+课堂高光默认关闭。使用 `--highlights` 或配置 `highlights.enabled = true` 后，烧录完成会生成精华视频 `xxx/xxx.highlights.mp4`（与成片 `xxx/xxx.mp4` 并排）和 `xxx/highlights/` 目录（课堂总结与独立高光切片，见「完整流水线的产物与行为」；默认在精华成功后回收该目录，只保留精华视频，`keep_artifacts = true` 可保留）。配置开启后想单次跳过可用 `--no-highlights`。
 
 ### 指定词汇目录与格式
 
@@ -144,7 +144,7 @@ out/
     ├── xxx.mp4                        # 双语硬字幕成片（原始文件名）
     ├── xxx.mp3                        # 源视频第一条音轨，192 kb/s
     ├── xxx.highlights.mp4             # 精华视频（启用高光时）
-    └── highlights/                    # 其余课堂高光产物
+    └── highlights/                    # 其余课堂高光产物（默认成功后回收，keep_artifacts = true 时保留）
         ├── summary.md                 # 课堂总结（主题、练习内容、重点表达、表现亮点）
         ├── index.html                 # 回看目录（切片标题、源区间、入选理由与链接、待复核）
         ├── clips/xxx.clip-NNN.mp4     # 独立高光切片（约 3 秒中文标题卡 + 完整事件）
@@ -206,11 +206,12 @@ target_seconds = 240      # 精华版目标时长，60–900；通常落在 180�
 intro_start_seconds = 0   # 精华版片头从源视频该秒数处取连续画面
 ja_voice = "Kyoko"        # 日文摘要配音的 macOS `say` 音色
 zh_voice = "Tingting"     # 中文串联标题卡配音的 macOS `say` 音色
+keep_artifacts = false    # 精华版成功后删除 highlights/ 目录，只保留精华视频
 ```
 
-`enabled` 必须是布尔值；`target_seconds` 必须是 60–900 的整数；`intro_start_seconds` 必须是不小于 0 的数值（原片开头有黑屏时可设为如 20）；音色必须是系统中已安装的非空音色名（`say -v ?` 列出可用音色）。开关可用 `--highlights` / `--no-highlights` 单次覆盖，其余键仅提供配置。
+`enabled` 与 `keep_artifacts` 必须是布尔值；`target_seconds` 必须是 60–900 的整数；`intro_start_seconds` 必须是不小于 0 的数值（原片开头有黑屏时可设为如 20）；音色必须是系统中已安装的非空音色名（`say -v ?` 列出可用音色）。开关可用 `--highlights` / `--no-highlights` 单次覆盖，其余键仅提供配置。
 
-高光关闭（`enabled = false` 或 `--no-highlights`）时不创建 `xxx/highlights/` 目录与 `xxx/xxx.highlights.mp4`，也跳过 `say` 与音色预检；`burn` 不读取该节也不生成高光。高光分析只向配置的 API 发送字幕文字、编号和时间，配音与全部媒体处理均在本地完成。
+高光关闭（`enabled = false` 或 `--no-highlights`）时不创建 `xxx/highlights/` 目录与 `xxx/xxx.highlights.mp4`，也跳过 `say` 与音色预检；`burn` 不读取该节也不生成高光。高光全部阶段成功后，默认（`keep_artifacts = false`）删除 `xxx/highlights/` 目录，只保留与成片并排的 `xxx/xxx.highlights.mp4`；精华版未完成或阶段失败时保留该目录以便断点续跑与排查。设 `keep_artifacts = true` 可保留课堂总结、回看目录、独立切片与分析数据等全部产物；注意回收后重跑该视频会从头重新分析（产生 API 调用）。高光分析只向配置的 API 发送字幕文字、编号和时间，配音与全部媒体处理均在本地完成。
 
 ## 测试
 

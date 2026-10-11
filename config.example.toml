@@ -76,6 +76,11 @@ intro_start_seconds = 0
 # bridge captions; `say -v ?` lists the installed voices.
 ja_voice = "Kyoko"
 zh_voice = "Tingting"
+# Keep the highlights/ working directory (summary, index, clips, analysis)
+# after a successful run. Default false: once the essence video is finished,
+# highlights/ is deleted and only <stem>.highlights.mp4 remains; an
+# incomplete essence keeps the directory so the next run can resume.
+keep_artifacts = false
 
 # Translation prompts (optional; delete to use the built-in defaults).
 # user_template placeholders: {n} batch size, {context} preceding lines,

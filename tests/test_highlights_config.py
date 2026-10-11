@@ -39,16 +39,18 @@ class TestHighlightsConfig(unittest.TestCase):
         self.assertEqual(cfg.highlights_intro_start_seconds, 0)
         self.assertEqual(cfg.highlights_ja_voice, "Kyoko")
         self.assertEqual(cfg.highlights_zh_voice, "Tingting")
+        self.assertIs(cfg.highlights_keep_artifacts, False)
 
     def test_explicit_values(self):
         cfg = self.load('[highlights]\nenabled = false\ntarget_seconds = 300\n'
                         'intro_start_seconds = 20\nja_voice = "Otoya"\n'
-                        'zh_voice = "Meijia"\n')
+                        'zh_voice = "Meijia"\nkeep_artifacts = true\n')
         self.assertIs(cfg.highlights_enabled, False)
         self.assertEqual(cfg.highlights_target_seconds, 300)
         self.assertEqual(cfg.highlights_intro_start_seconds, 20)
         self.assertEqual(cfg.highlights_ja_voice, "Otoya")
         self.assertEqual(cfg.highlights_zh_voice, "Meijia")
+        self.assertIs(cfg.highlights_keep_artifacts, True)
 
     def test_intro_accepts_float(self):
         cfg = self.load('[highlights]\nintro_start_seconds = 1.5\n')
@@ -68,6 +70,14 @@ class TestHighlightsConfig(unittest.TestCase):
                         config.ConfigError,
                         "highlights.enabled .* must be a boolean"):
                     self.load(f"[highlights]\nenabled = {value}\n")
+
+    def test_keep_artifacts_must_be_boolean(self):
+        for value in ('"true"', "1", "0", "[]"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                        config.ConfigError,
+                        "highlights.keep_artifacts .* must be a boolean"):
+                    self.load(f"[highlights]\nkeep_artifacts = {value}\n")
 
     def test_target_seconds_range_and_type(self):
         for value in ("59", "901", '"240"', "true", "1.5", "[]"):

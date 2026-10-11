@@ -48,7 +48,8 @@ def make_cfg(**overrides):
     values = dict(base_url="https://example.invalid", api_key="sk-test",
                   model="test-model", asr_model_id="test", prompt_system="",
                   prompt_user_template=DEFAULT_USER_TEMPLATE,
-                  force_style=DEFAULT_FORCE_STYLE, video_bitrate="4M")
+                  force_style=DEFAULT_FORCE_STYLE, video_bitrate="4M",
+                  highlights_keep_artifacts=True)
     values.update(overrides)
     return Config(**values)
 
@@ -250,3 +251,33 @@ def test_essence_failure_keeps_clips_and_recovers(media, tmp_path):
     state = json.loads((hdir / "state.json").read_text(encoding="utf-8"))
     assert state["stages"]["clips"]["status"] == "done"
     assert state["stages"]["render"]["status"] == "done"
+
+
+def test_cleanup_removes_artifacts_after_success(media, tmp_path):
+    video, ja, zh = media
+    video_dir = tmp_path / "out" / "lesson"
+    video_dir.mkdir(parents=True)
+    client = FakeClient(response(CANDIDATE), response(SUMMARY))
+    result = generate(video, ja, zh, video_dir,
+                      make_cfg(highlights_keep_artifacts=False), FFMPEG,
+                      client=client)
+
+    assert not result.essence_incomplete
+    assert (video_dir / "lesson.highlights.mp4").is_file()
+    assert not (video_dir / "highlights").exists()
+
+
+def test_cleanup_keeps_artifacts_when_essence_incomplete(media, tmp_path):
+    video, ja, zh = media
+    video_dir = tmp_path / "out" / "lesson"
+    video_dir.mkdir(parents=True)
+    cfg = make_cfg(highlights_keep_artifacts=False,
+                   highlights_ja_voice="No-Such-Voice")
+    client = FakeClient(response(CANDIDATE), response(SUMMARY))
+    result = generate(video, ja, zh, video_dir, cfg, FFMPEG, client=client)
+
+    assert result.essence_incomplete
+    assert not (video_dir / "lesson.highlights.mp4").exists()
+    hdir = video_dir / "highlights"
+    assert (hdir / "clips" / "lesson.clip-001.mp4").is_file()
+    assert (hdir / "state.json").is_file()

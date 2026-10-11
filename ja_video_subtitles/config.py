@@ -34,6 +34,7 @@ DEFAULT_MODEL = "deepseek-flash"
 DEFAULT_ASR_MODEL = "kotoba-tech/kotoba-whisper-v2.0-faster"
 DEFAULT_VIDEO_BITRATE = "8M"
 DEFAULT_HIGHLIGHTS_ENABLED = False
+DEFAULT_HIGHLIGHTS_KEEP_ARTIFACTS = False
 DEFAULT_HIGHLIGHTS_TARGET_SECONDS = 240
 DEFAULT_HIGHLIGHTS_INTRO_START_SECONDS = 0
 DEFAULT_HIGHLIGHTS_JA_VOICE = "Kyoko"
@@ -81,6 +82,7 @@ class Config:
     run_force: bool = False
     run_yes: bool = False
     highlights_enabled: bool = DEFAULT_HIGHLIGHTS_ENABLED
+    highlights_keep_artifacts: bool = DEFAULT_HIGHLIGHTS_KEEP_ARTIFACTS
     highlights_target_seconds: int = DEFAULT_HIGHLIGHTS_TARGET_SECONDS
     highlights_intro_start_seconds: float = DEFAULT_HIGHLIGHTS_INTRO_START_SECONDS
     highlights_ja_voice: str = DEFAULT_HIGHLIGHTS_JA_VOICE
@@ -140,6 +142,9 @@ def _highlights(data: dict, path: Path) -> dict:
     enabled = section.get("enabled", DEFAULT_HIGHLIGHTS_ENABLED)
     if not isinstance(enabled, bool):
         raise ConfigError(f"highlights.enabled in {path} must be a boolean")
+    keep = section.get("keep_artifacts", DEFAULT_HIGHLIGHTS_KEEP_ARTIFACTS)
+    if not isinstance(keep, bool):
+        raise ConfigError(f"highlights.keep_artifacts in {path} must be a boolean")
     target = section.get("target_seconds", DEFAULT_HIGHLIGHTS_TARGET_SECONDS)
     if type(target) is not int or not 60 <= target <= 900:
         raise ConfigError(f"highlights.target_seconds in {path} must be an "
@@ -150,6 +155,7 @@ def _highlights(data: dict, path: Path) -> dict:
                           "number >= 0")
     return {
         "enabled": enabled,
+        "keep_artifacts": keep,
         "target_seconds": target,
         "intro_start_seconds": intro,
         "ja_voice": _voice_name(section, "ja_voice", "highlights.ja_voice", path,
@@ -278,6 +284,7 @@ def load(path: Path | None = None) -> Config:
         run_force=_boolean(run, "force", "run.force", path),
         run_yes=_boolean(run, "yes", "run.yes", path),
         highlights_enabled=highlights["enabled"],
+        highlights_keep_artifacts=highlights["keep_artifacts"],
         highlights_target_seconds=highlights["target_seconds"],
         highlights_intro_start_seconds=highlights["intro_start_seconds"],
         highlights_ja_voice=highlights["ja_voice"],

@@ -65,7 +65,7 @@ For `burn` only, install Python, `srt`, `tqdm`, and ffmpeg; you can skip copying
 ./ja-video-subtitles run xxx.mp4 -o out --highlights           # include lesson highlights (off by default)
 ```
 
-Lesson highlights are off by default. With `--highlights` or `highlights.enabled = true`, burning is followed by an essence video `xxx/xxx.highlights.mp4` next to the burned `xxx/xxx.mp4`, plus a `xxx/highlights/` folder with a classroom summary and standalone highlight clips (see [Full pipeline outputs](#full-pipeline-outputs-and-behavior)). Use `--no-highlights` to skip them for a single run when they are enabled in the config.
+Lesson highlights are off by default. With `--highlights` or `highlights.enabled = true`, burning is followed by an essence video `xxx/xxx.highlights.mp4` next to the burned `xxx/xxx.mp4`, plus a `xxx/highlights/` folder with a classroom summary and standalone highlight clips (see [Full pipeline outputs](#full-pipeline-outputs-and-behavior); by default the folder is recycled once the essence succeeds, leaving only the essence video — set `keep_artifacts = true` to keep it). Use `--no-highlights` to skip them for a single run when they are enabled in the config.
 
 ### Choose vocabulary outputs
 
@@ -143,7 +143,7 @@ out/
     ├── xxx.mp4                        # Final hard-subtitled video (original filename)
     ├── xxx.mp3                        # Source video’s first audio stream, 192 kb/s MP3
     ├── xxx.highlights.mp4             # Essence video (when highlights are enabled)
-    └── highlights/                    # Remaining lesson highlights artifacts
+    └── highlights/                    # Remaining lesson highlights artifacts (recycled after success by default; kept with keep_artifacts = true)
         ├── summary.md                 # Classroom summary (topic, practice, key expressions, highlights)
         ├── index.html                 # Links every clip with title, source range, selection reason
         ├── clips/xxx.clip-NNN.mp4     # Standalone highlight clips (~3s title card + the complete event)
@@ -205,11 +205,12 @@ target_seconds = 240      # essence target length, 60-900; usually lands in 180-
 intro_start_seconds = 0   # essence intro footage starts this far into the source
 ja_voice = "Kyoko"        # macOS `say` voice for the Japanese summary narration
 zh_voice = "Tingting"     # macOS `say` voice for the Chinese bridge captions
+keep_artifacts = false    # delete highlights/ after a successful essence, keeping only the essence video
 ```
 
-`enabled` must be a boolean; `target_seconds` an integer from 60 to 900; `intro_start_seconds` a number >= 0 (use it to skip a black or noisy opening); voices must be nonempty voice names installed on the system (`say -v ?` lists them). Override the switch per run with `--highlights` / `--no-highlights`; the remaining keys are config-only.
+`enabled` and `keep_artifacts` must be booleans; `target_seconds` an integer from 60 to 900; `intro_start_seconds` a number >= 0 (use it to skip a black or noisy opening); voices must be nonempty voice names installed on the system (`say -v ?` lists them). Override the switch per run with `--highlights` / `--no-highlights`; the remaining keys are config-only.
 
-With highlights off (`enabled = false` or `--no-highlights`), no `xxx/highlights/` directory or `xxx/xxx.highlights.mp4` is created and the `say`/voice preflight is skipped. `burn` never reads this section and never generates highlights. The analysis only sends subtitle text, cue numbers, and timestamps to the configured API; voice synthesis and all media processing stay local.
+With highlights off (`enabled = false` or `--no-highlights`), no `xxx/highlights/` directory or `xxx/xxx.highlights.mp4` is created and the `say`/voice preflight is skipped. After a fully successful highlight run, the default (`keep_artifacts = false`) removes the `xxx/highlights/` directory, leaving only the essence video next to the burned video; an incomplete essence or a failed stage keeps the directory for resume and troubleshooting. Set `keep_artifacts = true` to keep the classroom summary, index, standalone clips, and analysis data; note that after cleanup a rerun re-analyzes the video from scratch (API calls included). `burn` never reads this section and never generates highlights. The analysis only sends subtitle text, cue numbers, and timestamps to the configured API; voice synthesis and all media processing stay local.
 
 ## Testing
 

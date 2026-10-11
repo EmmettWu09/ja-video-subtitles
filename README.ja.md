@@ -63,7 +63,7 @@ cp config.example.toml config.toml   # deepseek.api_key を記入
 ./ja-video-subtitles run xxx.mp4 -o out --highlights           # ハイライトを生成（既定はオフ）
 ```
 
-授業ハイライトは既定で無効です。`--highlights` を付けるか `highlights.enabled = true` にすると、焼き付け後にダイジェスト動画 `xxx/xxx.highlights.mp4`（完成動画 `xxx/xxx.mp4` と並列）と `xxx/highlights/`（授業サマリー・個別ハイライトクリップ）を生成します（「全工程の成果物と動作」参照）。設定で有効にしている場合、その回だけ省略するには `--no-highlights` を使います。
+授業ハイライトは既定で無効です。`--highlights` を付けるか `highlights.enabled = true` にすると、焼き付け後にダイジェスト動画 `xxx/xxx.highlights.mp4`（完成動画 `xxx/xxx.mp4` と並列）と `xxx/highlights/`（授業サマリー・個別ハイライトクリップ）を生成します（「全工程の成果物と動作」参照。既定ではダイジェスト成功後にこのフォルダを削除してダイジェスト動画のみ残します。残すには `keep_artifacts = true`）。設定で有効にしている場合、その回だけ省略するには `--no-highlights` を使います。
 
 ### 語彙の出力先と形式を選択
 
@@ -141,7 +141,7 @@ out/
     ├── xxx.mp4                        # 完成動画（元のファイル名）
     ├── xxx.mp3                        # 元動画の最初の音声トラック、192 kb/s
     ├── xxx.highlights.mp4             # ダイジェスト動画（ハイライト有効時）
-    └── highlights/                    # その他の授業ハイライト成果物
+    └── highlights/                    # その他の授業ハイライト成果物（既定では成功後に削除。keep_artifacts = true で保持）
         ├── summary.md                 # 授業サマリー（テーマ・練習内容・重要表現・見どころ）
         ├── index.html                 # 振り返り用目次（クリップのタイトル・ソース区間・選定理由・要確認）
         ├── clips/xxx.clip-NNN.mp4     # 個別クリップ（約 3 秒の中国語タイトルカード＋完全なイベント）
@@ -203,11 +203,12 @@ target_seconds = 240      # ダイジェストの目標時間（60–900 秒）�
 intro_start_seconds = 0   # ダイジェスト冒頭に使う元動画の開始位置（秒）
 ja_voice = "Kyoko"        # 日本語サマリーナレーションの macOS `say` の声
 zh_voice = "Tingting"     # 中国語タイトルカードの macOS `say` の声
+keep_artifacts = false    # ダイジェスト成功後に highlights/ を削除し、ダイジェスト動画のみ残す
 ```
 
-`enabled` は真偽値、`target_seconds` は 60〜900 の整数、`intro_start_seconds` は 0 以上の数値（冒頭に暗転がある場合は 20 など）です。声はシステムにインストール済みの空でない名前（`say -v ?` で一覧）を指定します。スイッチは `--highlights` / `--no-highlights` でその回だけ上書きでき、残りのキーは設定ファイルのみです。
+`enabled` と `keep_artifacts` は真偽値、`target_seconds` は 60〜900 の整数、`intro_start_seconds` は 0 以上の数値（冒頭に暗転がある場合は 20 など）です。声はシステムにインストール済みの空でない名前（`say -v ?` で一覧）を指定します。スイッチは `--highlights` / `--no-highlights` でその回だけ上書きでき、残りのキーは設定ファイルのみです。
 
-無効時（`enabled = false` または `--no-highlights`）は `xxx/highlights/` と `xxx/xxx.highlights.mp4` を作成せず、`say` と声の事前チェックも省略します。`burn` はこのセクションを読まず、ハイライトを生成しません。分析で API に送るのは字幕テキスト・番号・タイムスタンプだけで、音声合成とメディア処理はすべてローカルです。
+無効時（`enabled = false` または `--no-highlights`）は `xxx/highlights/` と `xxx/xxx.highlights.mp4` を作成せず、`say` と声の事前チェックも省略します。ハイライトの全工程が成功すると、既定（`keep_artifacts = false`）では `xxx/highlights/` を削除し、完成動画と並ぶ `xxx/xxx.highlights.mp4` だけを残します。ダイジェスト未完成や工程失敗時は途中再開と調査のためディレクトリを保持します。`keep_artifacts = true` にすると授業サマリー・目次・個別クリップ・分析データをすべて保持します。削除後に再実行すると分析からやり直し（API 呼び出しが発生）になる点に注意してください。`burn` はこのセクションを読まず、ハイライトを生成しません。分析で API に送るのは字幕テキスト・番号・タイムスタンプだけで、音声合成とメディア処理はすべてローカルです。
 
 ## テスト
 
