@@ -13,7 +13,8 @@ import srt
 
 STAGE_LABELS = {"transcribe": "Transcribe", "translate": "Translate",
                 "vocabulary": "Vocabulary",
-                "merge": "Bilingual merge", "burn": "Burn", "audio": "MP3 export"}
+                "merge": "Bilingual merge", "burn": "Burn", "audio": "MP3 export",
+                "highlights": "Highlights"}
 PRODUCT_SUFFIXES = [".ja.srt", ".ja.json", ".zh.srt", ".bilingual.srt",
                     ".vocab.json", ".vocab.md", ".sub.mp4", ".mp3"]
 
@@ -64,7 +65,8 @@ class Reporter:
 
     def __init__(self, out_dir: Path, *, version: str, asr_model: str,
                  translate_model: str, base_url: str, bitrate: str,
-                 burn_only: bool = False, vocabulary_config: dict | None = None):
+                 burn_only: bool = False, vocabulary_config: dict | None = None,
+                 highlights_config: dict | None = None):
         self.out_dir = out_dir
         self.version = version
         self.asr_model = asr_model
@@ -73,6 +75,7 @@ class Reporter:
         self.bitrate = bitrate
         self.burn_only = burn_only
         self.vocabulary_config = vocabulary_config
+        self.highlights_config = highlights_config
         self.start = datetime.now()
         self.path = self.out_dir / f"report-{self.start:%Y%m%d-%H%M%S}.md"
         self.records: list[VideoRecord] = []
@@ -113,6 +116,15 @@ class Reporter:
                      f"max_examples={cfg['max_examples']}")
             L.append(f"- Vocabulary output: `{cfg.get('output_dir', self.out_dir)}`, "
                      f"format={cfg.get('format', 'both')}")
+        if self.highlights_config is not None:
+            cfg = self.highlights_config
+            if cfg["enabled"]:
+                L.append(f"- Highlights: enabled, "
+                         f"target={cfg['target_seconds']}s, "
+                         f"intro_start={cfg['intro_start_seconds']}s, "
+                         f"voices={cfg['ja_voice']}/{cfg['zh_voice']}")
+            else:
+                L.append("- Highlights: disabled")
         L.append("")
         L.append("## Details")
         for r in self.records:
@@ -170,6 +182,16 @@ class Reporter:
                 if n is not None:
                     line += f", {n} subtitles"
             rows.append(line + ")")
+        if (not self.burn_only and self.highlights_config
+                and self.highlights_config.get("enabled")
+                and not any(stage.name == "highlights"
+                            and stage.status == "failed"
+                            for stage in record.stages)):
+            essence = (self.out_dir / f"{record.stem}.highlights"
+                       / "highlights.mp4")
+            if essence.is_file():
+                rows.append(f"- `{essence.relative_to(self.out_dir)}` "
+                            f"({_fmt_size(essence.stat().st_size)})")
         if not rows:
             return []
         return ["", "Products:", ""] + rows

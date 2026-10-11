@@ -197,7 +197,7 @@ class TestRunFallback(unittest.TestCase):
         path.write_bytes(b"original video")
         return path
 
-    def run(self, *arguments):
+    def invoke_run(self, *arguments):
         return invoke("run", *arguments)
 
     def test_config_only_run_uses_all_mapped_options(self):
@@ -208,7 +208,7 @@ class TestRunFallback(unittest.TestCase):
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "{out}"\n'
                           'force = true\nyes = true\n')
         with mock.patch("builtins.input", side_effect=AssertionError("prompted")):
-            code, _, stderr = self.run()
+            code, _, stderr = self.invoke_run()
         self.assertEqual((code, stderr), (0, ""))
         videos, out_dir, cfg = self.preflight.call_args.args
         self.assertEqual(videos, [video])
@@ -224,7 +224,7 @@ class TestRunFallback(unittest.TestCase):
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "saved-out"\n'
                           'force = true\nyes = true\n'
                           '[vocabulary]\noutput_dir = "words"\nformat = "json"\n')
-        code, _, _ = self.run(cli_video, "-o", cli_out, "--vocab-format", "md")
+        code, _, _ = self.invoke_run(cli_video, "-o", cli_out, "--vocab-format", "md")
         self.assertEqual(code, 0)
         videos, out_dir, cfg = self.preflight.call_args.args
         self.assertEqual((videos, out_dir), ([cli_video], cli_out))
@@ -238,24 +238,24 @@ class TestRunFallback(unittest.TestCase):
         video = self.video()
         out = self.root / "out"
         self.write_config(f'[run]\ninput = "{video}"\n')
-        self.assertEqual(self.run("-o", out)[0], 0)
+        self.assertEqual(self.invoke_run("-o", out)[0], 0)
         self.assertEqual(self.preflight.call_args.args[:2], ([video], out))
 
     def test_missing_output_after_merge_is_an_error_without_side_effects(self):
         video = self.video()
         self.write_config(f'[run]\ninput = "{video}"\n')
-        code, _, stderr = self.run()
+        code, _, stderr = self.invoke_run()
         self.assertEqual(code, 2)
         self.assertIn("-o/--output-dir", stderr)
         self.assertIn("run.output_dir", stderr)
         self.preflight.assert_not_called()
         self.process.assert_not_called()
-        self.assertEqual(list(self.root.iterdir()),
-                         [self.config_path, self.root / "a.mp4"])
+        self.assertEqual(sorted(self.root.iterdir()),
+                         sorted([self.config_path, self.root / "a.mp4"]))
 
     def test_missing_input_after_merge_is_an_error(self):
         self.write_config('[run]\noutput_dir = "out"\n')
-        code, _, stderr = self.run("-o", self.root / "cli-out")
+        code, _, stderr = self.invoke_run("-o", self.root / "cli-out")
         self.assertEqual(code, 2)
         self.assertIn("input", stderr)
         self.assertIn("run.input", stderr)
@@ -271,7 +271,7 @@ class TestRunFallback(unittest.TestCase):
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "{out}"\n'
                           'force = true\nyes = true\n')
         with mock.patch("builtins.input", return_value="n") as prompt:
-            code, _, _ = self.run("--no-force", "--no-yes")
+            code, _, _ = self.invoke_run("--no-force", "--no-yes")
         self.assertEqual(code, 0)
         prompt.assert_called_once()
         self.process.assert_not_called()
@@ -290,7 +290,7 @@ class TestRunFallback(unittest.TestCase):
                 self.process.reset_mock()
                 with mock.patch("builtins.input",
                                 side_effect=AssertionError("prompted")):
-                    code, _, _ = self.run(*options)
+                    code, _, _ = self.invoke_run(*options)
                 self.assertEqual(code, 0)
                 self.assertEqual(self.process.call_args.args[4], expected_force)
 
@@ -302,7 +302,7 @@ class TestRunFallback(unittest.TestCase):
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "{out}"\n'
                           'force = false\nyes = false\n')
         with mock.patch("builtins.input", side_effect=AssertionError("prompted")):
-            code, _, _ = self.run("--force", "-y")
+            code, _, _ = self.invoke_run("--force", "-y")
         self.assertEqual(code, 0)
         self.assertEqual(self.process.call_args.args[4], True)
 
@@ -312,7 +312,7 @@ class TestRunFallback(unittest.TestCase):
         for options in (("--force", "--no-force"), ("--no-force", "--force"),
                         ("-y", "--no-yes"), ("--yes", "--no-yes")):
             with self.subTest(options=options):
-                code, _, stderr = self.run(video, "-o", self.root / "out", *options)
+                code, _, stderr = self.invoke_run(video, "-o", self.root / "out", *options)
                 self.assertEqual(code, 2)
         self.load.assert_not_called()
         self.process.assert_not_called()
@@ -322,9 +322,9 @@ class TestRunFallback(unittest.TestCase):
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "saved"\n')
         for bad in ("", "   ", "bad\x00path"):
             with self.subTest(bad=bad):
-                code, _, _ = self.run(video, "-o", bad)
+                code, _, _ = self.invoke_run(video, "-o", bad)
                 self.assertEqual(code, 2)
-                code, _, _ = self.run(bad, "-o", self.root / "out")
+                code, _, _ = self.invoke_run(bad, "-o", self.root / "out")
                 self.assertEqual(code, 2)
         self.preflight.assert_not_called()
         self.assertFalse((self.root / "saved").exists())
@@ -337,7 +337,7 @@ class TestRunFallback(unittest.TestCase):
         for text in cases:
             with self.subTest(text=text):
                 self.write_config(text)
-                code, _, stderr = self.run(video, "-o", self.root / "out",
+                code, _, stderr = self.invoke_run(video, "-o", self.root / "out",
                                            "--no-force", "--vocab-format", "md")
                 self.assertEqual(code, 2)
         self.preflight.assert_not_called()
@@ -345,7 +345,7 @@ class TestRunFallback(unittest.TestCase):
 
     def test_run_requires_a_config_file_even_with_full_cli(self):
         video = self.video()
-        code, _, stderr = self.run(video, "-o", self.root / "out", "--force", "-y")
+        code, _, stderr = self.invoke_run(video, "-o", self.root / "out", "--force", "-y")
         self.assertEqual(code, 2)
         self.assertIn("config file", stderr)
         self.preflight.assert_not_called()
@@ -354,7 +354,7 @@ class TestRunFallback(unittest.TestCase):
     def test_unreadable_config_exits_two_without_a_traceback(self):
         self.config_path.mkdir()  # read_text raises IsADirectoryError
         video = self.video()
-        code, _, stderr = self.run(video, "-o", self.root / "out")
+        code, _, stderr = self.invoke_run(video, "-o", self.root / "out")
         self.assertEqual(code, 2)
         self.assertIn("cannot read config file", stderr)
         self.assertNotIn("Traceback", stderr)
@@ -364,7 +364,7 @@ class TestRunFallback(unittest.TestCase):
     def test_broken_toml_fails_run(self):
         video = self.video()
         self.write_config("[run")
-        code, _, stderr = self.run(video, "-o", self.root / "out")
+        code, _, stderr = self.invoke_run(video, "-o", self.root / "out")
         self.assertEqual(code, 2)
         self.assertIn("invalid TOML", stderr)
         self.preflight.assert_not_called()
@@ -376,7 +376,7 @@ class TestRunFallback(unittest.TestCase):
         cwd = os.getcwd()
         self.addCleanup(os.chdir, cwd)
         os.chdir(self.root)
-        code, _, stderr = self.run()
+        code, _, stderr = self.invoke_run()
         self.assertEqual((code, stderr), (0, ""))
 
     def test_replaced_config_paths_are_not_checked_or_created(self):
@@ -384,7 +384,7 @@ class TestRunFallback(unittest.TestCase):
         out = self.root / "real-out"
         self.write_config('[run]\ninput = "ghost/missing.mp4"\n'
                           'output_dir = "ghost-out"\n')
-        code, _, stderr = self.run(video, "-o", out)
+        code, _, stderr = self.invoke_run(video, "-o", out)
         self.assertEqual((code, stderr), (0, ""))
         self.assertEqual(self.preflight.call_args.args[:2], ([video], out))
         self.assertFalse((self.root / "ghost-out").exists())
@@ -393,7 +393,7 @@ class TestRunFallback(unittest.TestCase):
         self.video("saved.mp4")
         self.write_config(f'[run]\ninput = "{self.root / "saved.mp4"}"\n'
                           'output_dir = "out"\n')
-        code, _, stderr = self.run(self.root / "missing.mp4", "-o",
+        code, _, stderr = self.invoke_run(self.root / "missing.mp4", "-o",
                                    self.root / "out")
         self.assertEqual(code, 2)
         self.assertIn("input path does not exist", stderr)
@@ -414,7 +414,7 @@ class TestRunFallback(unittest.TestCase):
             return path
 
         with mock.patch.object(Path, "expanduser", expanduser):
-            code, _, stderr = self.run()
+            code, _, stderr = self.invoke_run()
         self.assertEqual((code, stderr), (0, ""))
         self.assertEqual(self.preflight.call_args.args[:2], ([video], out))
 
@@ -424,7 +424,7 @@ class TestRunFallback(unittest.TestCase):
         cwd = os.getcwd()
         self.addCleanup(os.chdir, cwd)
         os.chdir(self.root)
-        code, _, stderr = self.run()
+        code, _, stderr = self.invoke_run()
         self.assertEqual((code, stderr), (0, ""))
         videos, out_dir, _ = self.preflight.call_args.args
         self.assertEqual(videos, [Path("videos/a.mp4")])
@@ -435,7 +435,7 @@ class TestRunFallback(unittest.TestCase):
         cli_out = self.root / "cli-media"
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "saved-media"\n'
                           '[vocabulary]\noutput_dir = ""\n')
-        code, _, _ = self.run("-o", cli_out)
+        code, _, _ = self.invoke_run("-o", cli_out)
         self.assertEqual(code, 0)
         videos, out_dir, cfg = self.preflight.call_args.args
         self.assertEqual(out_dir, cli_out)
@@ -446,7 +446,7 @@ class TestRunFallback(unittest.TestCase):
         video = self.video("日语 视频.mp4", self.root / "输入 目录")
         out = self.root / "输出 目录"
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "{out}"\n')
-        code, _, stderr = self.run()
+        code, _, stderr = self.invoke_run()
         self.assertEqual((code, stderr), (0, ""))
         self.assertEqual(self.preflight.call_args.args[:2], ([video], out))
 
@@ -457,7 +457,7 @@ class TestRunFallback(unittest.TestCase):
         (out / "a.sub.mp4").symlink_to(video)
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "{out}"\n'
                           'force = true\nyes = true\n')
-        code, _, stderr = self.run()
+        code, _, stderr = self.invoke_run()
         self.assertEqual(code, 2)
         self.assertIn("would overwrite", stderr)
         self.assertEqual(video.read_bytes(), b"original video")

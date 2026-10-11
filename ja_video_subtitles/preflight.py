@@ -2,6 +2,7 @@
 
 import importlib
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -84,9 +85,40 @@ def run(videos: list[Path], out_dir: Path,
         except (OSError, RuntimeError) as e:
             errors.append(f"cannot resolve vocabulary output directory: {e}")
 
+    if getattr(cfg, "highlights_enabled", False):
+        errors.extend(check_highlights_voices(cfg))
+
     if errors:
         raise PreflightError("\n".join(f"  x {e}" for e in errors))
     return cfg, ffmpeg
+
+
+def check_highlights_voices(cfg: Config) -> list[str]:
+    """Verify `say` and the configured JA/ZH voices for the highlights stage."""
+    say = shutil.which("say")
+    if say is None:
+        return ["highlights are enabled but the macOS `say` command was not "
+                "found; install macOS speech support, or disable highlights "
+                "with --no-highlights or highlights.enabled = false"]
+    try:
+        result = subprocess.run([say, "-v", "?"], capture_output=True,
+                                text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return [f"cannot list `say` voices: {e}; disable highlights with "
+                "--no-highlights if speech synthesis is unavailable"]
+    voices = {line.split()[0] for line in result.stdout.splitlines()
+              if line.split()}
+    missing = [voice for voice in
+               {cfg.highlights_ja_voice, cfg.highlights_zh_voice}
+               if voice not in voices]
+    if missing:
+        return ["highlights voice(s) not installed: "
+                f"{', '.join(sorted(missing))}. Install them in System "
+                "Settings > Accessibility > Spoken Content, set "
+                "highlights.ja_voice / highlights.zh_voice to voices listed "
+                "by `say -v ?`, or disable highlights with --no-highlights "
+                "or highlights.enabled = false"]
+    return []
 
 
 def run_burn(videos: list[Path], out_dir: Path,

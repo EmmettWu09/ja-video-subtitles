@@ -28,7 +28,7 @@ class TestVocabularyPipeline(unittest.TestCase):
             base_url="https://example.invalid", api_key="sk-" + "x" * 32,
             model="test", asr_model_id="test", prompt_system="",
             prompt_user_template=DEFAULT_USER_TEMPLATE, force_style="",
-            video_bitrate="8M")
+            video_bitrate="8M", highlights_enabled=False)
         self.ffmpeg = Path("/fake/ffmpeg")
         self.stdout = self.enterContext(redirect_stdout(io.StringIO()))
         self.stderr = self.enterContext(redirect_stderr(io.StringIO()))

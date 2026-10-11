@@ -33,6 +33,11 @@ DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-flash"
 DEFAULT_ASR_MODEL = "kotoba-tech/kotoba-whisper-v2.0-faster"
 DEFAULT_VIDEO_BITRATE = "8M"
+DEFAULT_HIGHLIGHTS_ENABLED = True
+DEFAULT_HIGHLIGHTS_TARGET_SECONDS = 240
+DEFAULT_HIGHLIGHTS_INTRO_START_SECONDS = 0
+DEFAULT_HIGHLIGHTS_JA_VOICE = "Kyoko"
+DEFAULT_HIGHLIGHTS_ZH_VOICE = "Tingting"
 
 
 class ConfigError(Exception):
@@ -75,6 +80,11 @@ class Config:
     run_output_dir: str | None = None
     run_force: bool = False
     run_yes: bool = False
+    highlights_enabled: bool = DEFAULT_HIGHLIGHTS_ENABLED
+    highlights_target_seconds: int = DEFAULT_HIGHLIGHTS_TARGET_SECONDS
+    highlights_intro_start_seconds: float = DEFAULT_HIGHLIGHTS_INTRO_START_SECONDS
+    highlights_ja_voice: str = DEFAULT_HIGHLIGHTS_JA_VOICE
+    highlights_zh_voice: str = DEFAULT_HIGHLIGHTS_ZH_VOICE
 
 
 def _section(data: dict, name: str, path: Path) -> dict:
@@ -111,6 +121,42 @@ def _boolean(section: dict, key: str, field: str, path: Path) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"{field} in {path} must be a boolean")
     return value
+
+
+def _voice_name(section: dict, key: str, field: str, path: Path,
+                default: str) -> str:
+    """A voice name must be a nonempty, blank-free, NUL-free string."""
+    if key not in section:
+        return default
+    value = section[key]
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise ConfigError(f"{field} in {path} must be a nonempty voice name string")
+    return value
+
+
+def _highlights(data: dict, path: Path) -> dict:
+    """Validate the run-scope [highlights] section; burn never reads it."""
+    section = _section(data, "highlights", path)
+    enabled = section.get("enabled", DEFAULT_HIGHLIGHTS_ENABLED)
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"highlights.enabled in {path} must be a boolean")
+    target = section.get("target_seconds", DEFAULT_HIGHLIGHTS_TARGET_SECONDS)
+    if type(target) is not int or not 60 <= target <= 900:
+        raise ConfigError(f"highlights.target_seconds in {path} must be an "
+                          "integer from 60 to 900")
+    intro = section.get("intro_start_seconds", DEFAULT_HIGHLIGHTS_INTRO_START_SECONDS)
+    if isinstance(intro, bool) or not isinstance(intro, (int, float)) or intro < 0:
+        raise ConfigError(f"highlights.intro_start_seconds in {path} must be a "
+                          "number >= 0")
+    return {
+        "enabled": enabled,
+        "target_seconds": target,
+        "intro_start_seconds": intro,
+        "ja_voice": _voice_name(section, "ja_voice", "highlights.ja_voice", path,
+                                DEFAULT_HIGHLIGHTS_JA_VOICE),
+        "zh_voice": _voice_name(section, "zh_voice", "highlights.zh_voice", path,
+                                DEFAULT_HIGHLIGHTS_ZH_VOICE),
+    }
 
 
 def vocabulary_output_dir(cfg: Config, out_dir: Path) -> Path:
@@ -211,6 +257,7 @@ def load(path: Path | None = None) -> Config:
                                 "vocabulary.output_dir", path)
     if output_format not in ("md", "json", "both"):
         raise ConfigError(f"vocabulary.format in {path} must be one of md/json/both")
+    highlights = _highlights(data, path)
     return Config(
         base_url=ds.get("base_url", DEFAULT_BASE_URL),
         api_key=ds.get("api_key", ""),
@@ -230,6 +277,11 @@ def load(path: Path | None = None) -> Config:
         run_output_dir=_required_path(run, "output_dir", "run.output_dir", path),
         run_force=_boolean(run, "force", "run.force", path),
         run_yes=_boolean(run, "yes", "run.yes", path),
+        highlights_enabled=highlights["enabled"],
+        highlights_target_seconds=highlights["target_seconds"],
+        highlights_intro_start_seconds=highlights["intro_start_seconds"],
+        highlights_ja_voice=highlights["ja_voice"],
+        highlights_zh_voice=highlights["zh_voice"],
     )
 
 

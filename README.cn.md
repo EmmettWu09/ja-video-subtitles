@@ -2,7 +2,7 @@
 
 **任意日文视频 → 一条命令 → 日/中双语硬字幕成片。**
 
-流水线：`视频 → 日文转写(kotoba-whisper) → 日译中(DeepSeek) → 词汇表 → 双语合成 → 烧录(ffmpeg) → 导出 MP3`
+流水线：`视频 → 日文转写(kotoba-whisper) → 日译中(DeepSeek) → 词汇表 → 双语合成 → 烧录(ffmpeg) → 导出 MP3 → 课堂高光`
 
 ## 工作流程
 
@@ -14,8 +14,9 @@
 | 双语合成 | 日/中逐条对齐（上日下中），纯本地，瞬间完成 | `xxx.bilingual.srt` |
 | 烧录 | ffmpeg 把字幕逐帧画进画面，VideoToolbox 硬编出成片 | `xxx.sub.mp4` |
 | 音频 | 本地提取源视频第一条音轨并转码为 MP3 | `xxx.mp3` |
+| 课堂高光 | 基于双语字幕做纯文本分析，发现初学者高光事件，产出课堂总结、独立切片与精华视频（本地 `say` 配音） | `xxx.highlights/` |
 
-转写、分词与 JLPT 查询、合成、烧录和音频导出均在本地执行。翻译会把字幕文本发送到配置的 API；词汇释义会把去重后的词及日文例句发送到同一服务。这些阶段不会上传音视频。默认 API 模型为 `deepseek-flash`。各阶段耗时见报告 `report-*.md`。
+转写、分词与 JLPT 查询、合成、烧录和音频导出均在本地执行。翻译会把字幕文本发送到配置的 API；词汇释义会把去重后的词及日文例句发送到同一服务；课堂高光分析只发送字幕文字、编号和时间。这些阶段都不会上传音视频或截图。默认 API 模型为 `deepseek-flash`。各阶段耗时见报告 `report-*.md`。
 
 支持 mp4/mov，单文件或文件夹批量；`burn` 还可一次传入多个文件和文件夹。字幕、成片、MP3、日志与报告写入 `-o`，词汇文件可单独指定目录；不修改源视频。
 
@@ -35,6 +36,7 @@
 | ffmpeg-full | 字幕烧录（libass） | `brew install homebrew-ffmpeg/ffmpeg/ffmpeg-full` |
 | DeepSeek API Key | 日译中和词汇释义 | [DeepSeek 平台](https://platform.deepseek.com) |
 | SudachiPy / SudachiDict-core | 本地词汇形态分析 | 随 `requirements.txt` 安装；词典下载约 70 MB |
+| `say` 音色（Kyoko/Tingting） | 高光精华片的本地配音 | macOS 自带；在 系统设置 > 辅助功能 > 朗读内容 中管理 |
 
 字幕字体为 macOS 自带苹方，无需安装。
 
@@ -58,7 +60,10 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 ./ja-video-subtitles run /path/to/dir   -o /path/to/output     # 文件夹批量
 ./ja-video-subtitles run /path/to/dir   -o out -y              # 同名自动覆盖
 ./ja-video-subtitles run xxx.mp4 -o out --force                # 全部重跑
+./ja-video-subtitles run xxx.mp4 -o out --no-highlights        # 跳过课堂高光
 ```
+
+课堂高光默认开启：烧录完成后生成 `xxx.highlights/` 目录，包含课堂总结、独立高光切片和精华视频（见「完整流水线的产物与行为」）。单次跳过用 `--no-highlights`；配置 `highlights.enabled = false` 默认关闭；`--highlights` 可单次重新开启。
 
 ### 指定词汇目录与格式
 
@@ -85,6 +90,7 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 | `run` | `-y/--yes` / `--no-yes` | `run.yes` | `false` |
 | `run` | `--vocab-output-dir` | `vocabulary.output_dir` | 跟随有效主输出目录 |
 | `run` | `--vocab-format` | `vocabulary.format` | `both` |
+| `run` | `--highlights` / `--no-highlights` | `highlights.enabled` | `true`（默认生成高光） |
 | `burn` | 位置参数 inputs | `burn.inputs` | 合并后必填 |
 | `burn` | `-o/--output-dir` | `burn.output_dir` | 合并后必填 |
 | `burn` | `-s/--subtitles` | `burn.subtitles` | 无显式字幕文件 |
@@ -125,15 +131,18 @@ output_dir = "out"
 
 ### 完整流水线的产物与行为
 
-`run` 产物（默认都在 `-o`，词汇文件可另设目录且按所选格式生成）：`xxx.ja.srt`（日文）、`xxx.ja.json`（转写置信度）、`xxx.zh.srt`（中文）、`xxx.vocab.md`（词汇表）、`xxx.vocab.json`（结构化词条及复用元数据）、`xxx.bilingual.srt`（双语，上日下中）、`xxx.sub.mp4`（成片）、`xxx.mp3`（源视频第一条音轨，192 kb/s，与成片同目录）、`report-<时间戳>.md`（运行报告）、`run.log`（日志）。词汇功能禁用时不生成词汇产物。
+`run` 产物（默认都在 `-o`，词汇文件可另设目录且按所选格式生成）：`xxx.ja.srt`（日文）、`xxx.ja.json`（转写置信度）、`xxx.zh.srt`（中文）、`xxx.vocab.md`（词汇表）、`xxx.vocab.json`（结构化词条及复用元数据）、`xxx.bilingual.srt`（双语，上日下中）、`xxx.sub.mp4`（成片）、`xxx.mp3`（源视频第一条音轨，192 kb/s，与成片同目录）、`xxx.highlights/`（课堂高光，启用时）、`report-<时间戳>.md`（运行报告）、`run.log`（日志）。词汇功能禁用时不生成词汇产物；高光关闭时不创建高光目录。
+
+`xxx.highlights/` 内部：`summary.md` 课堂总结（主题、练习内容、重点表达、含源视频时间点的表现亮点）；`index.html` 回看目录（每个切片的标题、源区间、入选理由与播放链接，以及待复核事项）；`highlights.mp4` 精华视频（片头为原片开头画面配本地 `say` 合成的日文摘要配音，原音轨完全不进入片头；随后是保留原声的高光片段与中文串联标题卡）；`clips/clip-NNN.mp4` 独立高光切片（约 3 秒中文标题卡 + 完整事件）；`subtitles/` 存放配套 SRT 供编辑或其他用途——视频已含字幕，观看时请关闭外挂字幕；`analysis/`、`plans/`、`state.json`、`report.json` 记录配对字幕、候选取舍、唯一成片时间轴、断点状态与自动检查结果。
 
 行为要点：
 
 - 相对路径以执行命令时的目录为准；config 与模型缓存始终从项目目录读取。
 - 断点续跑：已有合法产物自动跳过；损坏产物自动重跑。`run` 仅复用与当前日文/中文字幕重新合成结果一致的双语字幕；修改任一源字幕后会先更新双语文件再烧录。手工编辑后的独立 SRT 可用 `burn` 原样烧录。
-- 同名成片或 MP3 在处理开始前统一询问；处理过程不中断。拒绝任一已有输出或标准输入为 EOF 时，跳过该视频。`-y` 或 `--force` 自动覆盖；确认处理后会重新从源视频导出 MP3，导出失败保留此前的正式 MP3。
-- 预检平台、Python 依赖、ffmpeg+libass+MP3 编码器、config/api_key、DeepSeek 连通、模型就绪、磁盘空间和输出目录可写。词汇启用时还会创建并检查词汇目录可写，再检查分词器、本地形态词典及 JLPT 数据的 schema、版本与哈希；任一失败会在处理前退出并给出修复指引。
-- 词汇阶段整体失败仍继续合成与烧录，该视频记为 `partial`（部分成功），整批退出码为 `1`；音频导出失败同样记为 `partial`，保留成功成片并继续后续视频；其他处理失败为 `failed`，确认跳过为 `skipped`。单个词释义重试后失败时，保留词条、留空释义并附 warning，只计为释义降级。报告包含 succeeded/partial/failed/skipped 数量、词汇等级分布、释义降级数量、错误、实际所选词汇路径和成功导出的音频，不含 API key。音频导出失败时保留的旧 MP3 不会被报告为本次成功产物。
+- 同名成片、MP3 或 `xxx.highlights/highlights.mp4` 在处理开始前统一询问；处理过程不中断。拒绝任一已有输出或标准输入为 EOF 时，跳过该视频。`-y` 或 `--force` 自动覆盖；确认处理后会重新从源视频导出 MP3，导出失败保留此前的正式 MP3。
+- 预检平台、Python 依赖、ffmpeg+libass+MP3 编码器、config/api_key、DeepSeek 连通、模型就绪、磁盘空间和输出目录可写。词汇启用时还会创建并检查词汇目录可写，再检查分词器、本地形态词典及 JLPT 数据的 schema、版本与哈希；高光启用时还会检查 macOS `say` 命令及配置的 `highlights.ja_voice`/`zh_voice` 音色是否已安装（`say -v ?` 列出可用音色）。任一失败会在处理前退出并给出修复指引；关闭对应功能即跳过其检查。
+- 词汇阶段整体失败仍继续合成与烧录，该视频记为 `partial`（部分成功），整批退出码为 `1`；音频导出失败同样记为 `partial`，保留成功成片并继续后续视频；高光阶段失败也遵循同样语义：双语成片与 MP3 不受影响，视频记为 `partial`，批次继续；若仅精华视频合成失败（如配音不可用），已完成的独立切片与分析产物保留，并在总结、回看目录与报告中标注精华版未完成。其他处理失败为 `failed`，确认跳过为 `skipped`。单个词释义重试后失败时，保留词条、留空释义并附 warning，只计为释义降级。报告包含 succeeded/partial/failed/skipped 数量、词汇等级分布、释义降级数量、错误、实际所选词汇路径和成功导出的音频，不含 API key；高光启用时还会记录高光阶段耗时、切片数量与精华实际时长。音频导出失败时保留的旧 MP3 不会被报告为本次成功产物。
+- 高光断点续跑：高光各阶段按源视频、双语字幕、模型、音色、目标时长、片头起点与提示词版本缓存；未变化的阶段直接跳过（含模型调用），`--force` 全部重跑；失败阶段不会覆盖此前成功的产物。
 - 烧录或音频导出中 Ctrl+C 会杀掉 ffmpeg 并清理临时/半成品文件；此前正式 MP3 保留。
 
 ### 词汇配置
@@ -165,18 +174,35 @@ uv pip install --python .venv/bin/python --reinstall-package SudachiPy --reinsta
 .venv/bin/python ja_video_subtitles/data/rebuild_jlpt.py
 ```
 
+### 课堂高光配置
+
+高光默认开启。项目根目录 `config.toml` 中的可选配置，默认值如下：
+
+```toml
+[highlights]
+enabled = true
+target_seconds = 240      # 精华版目标时长，60–900；通常落在 180–300 秒
+intro_start_seconds = 0   # 精华版片头从源视频该秒数处取连续画面
+ja_voice = "Kyoko"        # 日文摘要配音的 macOS `say` 音色
+zh_voice = "Tingting"     # 中文串联标题卡配音的 macOS `say` 音色
+```
+
+`enabled` 必须是布尔值；`target_seconds` 必须是 60–900 的整数；`intro_start_seconds` 必须是不小于 0 的数值（原片开头有黑屏时可设为如 20）；音色必须是系统中已安装的非空音色名（`say -v ?` 列出可用音色）。开关可用 `--highlights` / `--no-highlights` 单次覆盖，其余键仅提供配置。
+
+高光关闭（`enabled = false` 或 `--no-highlights`）时不创建 `xxx.highlights/` 目录，也跳过 `say` 与音色预检；`burn` 不读取该节也不生成高光。高光分析只向配置的 API 发送字幕文字、编号和时间，配音与全部媒体处理均在本地完成。
+
 ## 测试
 
 ```bash
-.venv/bin/python -m unittest discover -s tests
+.venv/bin/python -m pytest tests/ -q
 ```
 
-离线单测，不依赖模型与 API。
+大部分测试为离线测试，不依赖模型与 API；高光单元测试使用模拟模型客户端。高光端到端测试用真实 ffmpeg 与 `say` 渲染短视频（不调用 API），ffmpeg、`say` 或 Kyoko/Tingting 音色不可用时自动跳过。
 
 本机安装 ffmpeg 后，可额外运行真实烧录与 MP3 导出测试（自动生成短视频，无需模型或配置）：
 
 ```bash
-RUN_FFMPEG_TESTS=1 .venv/bin/python -m unittest discover -s tests
+RUN_FFMPEG_TESTS=1 .venv/bin/python -m pytest tests/ -q
 ```
 
 ## 代码结构
@@ -192,7 +218,7 @@ RUN_FFMPEG_TESTS=1 .venv/bin/python -m unittest discover -s tests
 
 ## 预期耗时（1 小时视频，M 系芯片）
 
-转写约 10–20 分钟，翻译约 2–5 分钟，烧录约 5–15 分钟（VideoToolbox 硬编）。词汇阶段取决于去重后的目标词数和 API 延迟，实际耗时见报告。
+转写约 10–20 分钟，翻译约 2–5 分钟，烧录约 5–15 分钟（VideoToolbox 硬编）。词汇阶段取决于去重后的目标词数和 API 延迟，实际耗时见报告。高光阶段为若干次分块文本分析调用加选中片段的本地渲染。
 
 ## License
 

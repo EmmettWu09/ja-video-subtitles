@@ -166,19 +166,29 @@ def check_run_targets(videos: list[Path], out_dir: Path, cfg,
                         ".sub.mp4", ".mp3"))
         if getattr(cfg, "vocabulary_enabled", False):
             pending.extend(vocab_dir / f"{video.stem}.vocab.{fmt}" for fmt in formats)
+        if getattr(cfg, "highlights_enabled", False):
+            hdir = out_dir / f"{video.stem}.highlights"
+            pending.extend(hdir / name for name in
+                           ("highlights.mp4", "summary.md", "index.html",
+                            "state.json", "report.json"))
     _check_targets(videos, pending)
 
 
 def confirm_overwrites(videos: list[Path], out_dir: Path,
-                       assume_yes: bool, *, include_audio: bool = False
+                       assume_yes: bool, *, include_audio: bool = False,
+                       include_highlights: bool = False
                        ) -> tuple[list[Path], list[Path]]:
     """Return (to_process, skipped). All conflicts are resolved upfront,
     before any burning starts."""
     todo, skipped = [], []
     for v in videos:
-        suffixes = (".sub.mp4", ".mp3") if include_audio else (".sub.mp4",)
-        existing = [out_dir / f"{v.stem}{suffix}" for suffix in suffixes
-                    if (out_dir / f"{v.stem}{suffix}").exists()]
+        relatives = [f"{v.stem}.sub.mp4"]
+        if include_audio:
+            relatives.append(f"{v.stem}.mp3")
+        if include_highlights:
+            relatives.append(f"{v.stem}.highlights/highlights.mp4")
+        existing = [out_dir / relative for relative in relatives
+                    if (out_dir / relative).exists()]
         if existing and not assume_yes:
             names = ", ".join(str(target) for target in existing)
             try:
@@ -287,6 +297,32 @@ def process_video(video: Path, out_dir: Path, cfg, ffmpeg: Path,
         record.stages.append(StageRecord(
             "audio", "failed", time.monotonic() - t0, message))
 
+    if getattr(cfg, "highlights_enabled", False):
+        t0 = time.monotonic()
+        try:
+            from . import highlights
+            result = highlights.generate(video, ja_srt, zh_srt, out_dir, cfg,
+                                         ffmpeg, force=force)
+            parts = [f"{result.clip_count} clips"]
+            if result.essence_seconds is not None:
+                parts.append(f"essence {result.essence_seconds:.0f}s")
+            if result.essence_incomplete:
+                parts.append(f"essence incomplete: {result.note}")
+            elif result.note:
+                parts.append(result.note)
+            note = "; ".join(parts)
+            print(f"[highlights] done: {note}")
+            record.stages.append(StageRecord(
+                "highlights", "done", time.monotonic() - t0, note))
+        except Exception as e:
+            message = safe_error(e, cfg.api_key)
+            print(f"[highlights] failed: {message}", file=sys.stderr)
+            record.status = "partial"
+            record.error = "; ".join(
+                filter(None, (record.error, f"highlights: {message}")))
+            record.stages.append(StageRecord(
+                "highlights", "failed", time.monotonic() - t0, message))
+
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Prepare a full run; return 2 for startup errors or the batch exit code."""
@@ -308,6 +344,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         cfg.vocabulary_output_dir = args.vocab_output_dir
     if args.vocab_format is not None:
         cfg.vocabulary_format = args.vocab_format
+    if getattr(args, "highlights", None) is not None:
+        cfg.highlights_enabled = args.highlights
     force = args.force if args.force is not None else cfg.run_force
     yes = args.yes if args.yes is not None else cfg.run_yes
 
@@ -338,7 +376,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                             "include_unknown": getattr(cfg, "include_unknown", True),
                             "max_examples": getattr(cfg, "max_examples", 3),
                             "output_dir": str(vocabulary_output_dir(cfg, out_dir)),
-                            "format": getattr(cfg, "vocabulary_format", "both")})
+                            "format": getattr(cfg, "vocabulary_format", "both")},
+                        highlights_config={
+                            "enabled": getattr(cfg, "highlights_enabled", False),
+                            "target_seconds": getattr(
+                                cfg, "highlights_target_seconds", 240),
+                            "intro_start_seconds": getattr(
+                                cfg, "highlights_intro_start_seconds", 0),
+                            "ja_voice": getattr(cfg, "highlights_ja_voice", ""),
+                            "zh_voice": getattr(cfg, "highlights_zh_voice", "")})
     try:
         check_run_targets(videos, out_dir, cfg, reporter.path)
     except (ValueError, OSError) as e:
@@ -347,7 +393,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     return _run_batch(videos, out_dir, reporter, yes or force,
                       lambda video, record: process_video(
                           video, out_dir, cfg, ffmpeg, force, record),
-                      include_audio=True)
+                      include_audio=True,
+                      include_highlights=getattr(cfg, "highlights_enabled",
+                                                 False))
 
 
 def cmd_burn(args: argparse.Namespace) -> int:
@@ -413,7 +461,8 @@ def _run_batch(videos: list[Path], out_dir: Path, reporter: Reporter,
                assume_yes: bool,
                process: Callable[[Path, VideoRecord], None],
                subtitle_sources: dict[Path, Path] | None = None, *,
-               include_audio: bool = False) -> int:
+               include_audio: bool = False,
+               include_highlights: bool = False) -> int:
     """Confirm all overwrites, process videos independently, and persist results.
 
     Return 1 if any video fails or is partial, otherwise 0. Restore terminal
@@ -432,7 +481,8 @@ def _run_batch(videos: list[Path], out_dir: Path, reporter: Reporter,
     sys.stderr = _Tee(orig_err, log_fp)
     try:
         todo, skipped = confirm_overwrites(
-            videos, out_dir, assume_yes=assume_yes, include_audio=include_audio)
+            videos, out_dir, assume_yes=assume_yes, include_audio=include_audio,
+            include_highlights=include_highlights)
         reporter.records.extend(
             make_record(v, "skipped") for v in skipped)
 
@@ -492,7 +542,9 @@ def main() -> None:
     p_run = sub.add_parser(
         "run", help="process videos",
         description="Transcribe -> translate -> vocabulary -> bilingual merge -> burn. "
-                    "Export MP3 audio alongside the subtitled video. "
+                    "Export MP3 audio alongside the subtitled video, then build "
+                    "lesson highlights (clips, summary, and a short essence "
+                    "video under <stem>.highlights/) unless disabled. "
                     "Explicit CLI options override config.toml, which overrides "
                     "built-in defaults; vocabulary output location and format "
                     "are configurable.",
@@ -500,6 +552,7 @@ def main() -> None:
                "  ja-video-subtitles run video.mp4 -o out\n"
                "  ja-video-subtitles run ./videos -o out -y   # batch, auto-overwrite\n"
                "  ja-video-subtitles run video.mp4 -o out --vocab-output-dir words --vocab-format md\n"
+               "  ja-video-subtitles run video.mp4 -o out --no-highlights   # skip lesson highlights\n"
                "  ja-video-subtitles run video.mov -o out --force   # redo all stages\n"
                "  ja-video-subtitles run   # input/output from [run] in config.toml\n"
                "  ja-video-subtitles run -o out   # only the output dir from the CLI\n"
@@ -509,8 +562,9 @@ def main() -> None:
                        help="an mp4/mov file or a folder of them "
                             "(default: run.input in config.toml)")
     p_run.add_argument("-o", "--output-dir", type=_path_arg,
-                       help="directory for subtitles, sub.mp4, MP3, log, and "
-                            "report (default: run.output_dir in config.toml)")
+                       help="directory for subtitles, sub.mp4, MP3, "
+                            "highlights, log, and report "
+                            "(default: run.output_dir in config.toml)")
     p_run.add_argument("--vocab-output-dir", metavar="DIR", type=_path_arg,
                        help="vocabulary directory (default: vocabulary.output_dir "
                             "in config.toml, or output-dir alongside sub.mp4)")
@@ -531,6 +585,15 @@ def main() -> None:
     yes_group.add_argument("--no-yes", action="store_false", dest="yes",
                            help="ask before overwriting even when run.yes is "
                                 "true in config.toml")
+    highlights_group = p_run.add_mutually_exclusive_group()
+    highlights_group.add_argument(
+        "--highlights", action="store_true", default=None, dest="highlights",
+        help="generate lesson highlights after burning (default: "
+             "highlights.enabled in config.toml, or true)")
+    highlights_group.add_argument(
+        "--no-highlights", action="store_false", dest="highlights",
+        help="skip the highlights stage even when highlights.enabled is "
+             "true in config.toml")
 
     p_burn = sub.add_parser(
         "burn", help="burn existing SRT subtitles into one or more videos",

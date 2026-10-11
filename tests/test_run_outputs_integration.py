@@ -50,7 +50,8 @@ class TestRealRunOutputs(unittest.TestCase):
                             f"1\n00:00:00,000 --> 00:00:00,900\n{text}\n\n",
                             encoding="utf-8")
                     argv = ["ja-video-subtitles", "run", str(video), "-o", str(output),
-                            "--vocab-output-dir", str(words), "--vocab-format", fmt, "-y"]
+                            "--vocab-output-dir", str(words), "--vocab-format", fmt,
+                            "--no-highlights", "-y"]
                     with mock.patch("sys.argv", argv), \
                             mock.patch.object(cli.preflight, "load", return_value=config.load(settings)), \
                             mock.patch.object(cli.preflight.model_mod, "model_ready", return_value=True), \
