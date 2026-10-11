@@ -44,16 +44,17 @@ class TestRealRunOutputs(unittest.TestCase):
             for fmt in ("md", "json", "both"):
                 with self.subTest(fmt=fmt):
                     output, words = root / fmt / "media", root / fmt / "生词 notes"
-                    output.mkdir(parents=True)
+                    video_dir = output / video.stem
+                    video_dir.mkdir(parents=True)
                     for suffix, text in (("ja", "確認しました。"), ("zh", "已经确认了。")):
-                        (output / f"{video.stem}.{suffix}.srt").write_text(
+                        (video_dir / f"{video.stem}.{suffix}.srt").write_text(
                             f"1\n00:00:00,000 --> 00:00:00,900\n{text}\n\n",
                             encoding="utf-8")
                     argv = ["ja-video-subtitles", "run", str(video), "-o", str(output),
                             "--vocab-output-dir", str(words), "--vocab-format", fmt,
                             "--no-highlights", "-y"]
                     with mock.patch("sys.argv", argv), \
-                            mock.patch.object(cli.preflight, "load", return_value=config.load(settings)), \
+                            mock.patch.object(cli, "load", return_value=config.load(settings)), \
                             mock.patch.object(cli.preflight.model_mod, "model_ready", return_value=True), \
                             mock.patch("openai.OpenAI") as api, \
                             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), \
@@ -66,8 +67,8 @@ class TestRealRunOutputs(unittest.TestCase):
                     self.assertEqual({p.name for p in words.iterdir()},
                                      {f"{video.stem}.vocab.{ext}" for ext in selected})
                     self.assertFalse(list(output.glob("*.vocab.*")))
-                    self.assertTrue((output / f"{video.stem}.sub.mp4").is_file())
-                    audio = output / f"{video.stem}.mp3"
+                    self.assertTrue((video_dir / f"{video.stem}.mp4").is_file())
+                    audio = video_dir / f"{video.stem}.mp3"
                     probe = subprocess.run([
                         str(ffprobe), "-v", "error", "-show_entries",
                         "stream=codec_type,codec_name:format=duration", "-of", "json", str(audio),

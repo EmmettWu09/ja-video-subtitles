@@ -1,4 +1,4 @@
-"""Burn-in: ffmpeg subtitles filter -> <out>/xxx.sub.mp4."""
+"""Burn-in: ffmpeg subtitles filter -> <out>/xxx.sub.mp4 by default."""
 
 import subprocess
 import tempfile
@@ -11,16 +11,19 @@ from .ffmpeg_util import (escape_filter_path, escape_filter_value, find_ffprobe,
 
 
 def burn(video: Path, bilingual_srt: Path, out_dir: Path, ffmpeg: Path,
-         force_style: str, bitrate: str = "8M") -> Path:
+         force_style: str, bitrate: str = "8M",
+         output: Path | None = None) -> Path:
     """Encode hard subtitles using VideoToolbox and copy the source audio.
 
     Write directly to the destination, overwriting it if present; failed or
     interrupted encodes remove the partial MP4. The output directory must exist.
+    `output` overrides the default <out_dir>/<stem>.sub.mp4 destination (used
+    by `run`, which burns to <out>/<stem>/<stem>.mp4).
     """
     ffprobe = find_ffprobe(ffmpeg)
     duration = probe_duration(ffprobe, video) if ffprobe else None
 
-    out_mp4 = out_dir / f"{video.stem}.sub.mp4"
+    out_mp4 = output if output is not None else out_dir / f"{video.stem}.sub.mp4"
     vf = (f"subtitles={escape_filter_path(bilingual_srt)}"
           f":force_style={escape_filter_value(force_style)}")
     cmd = [

@@ -6,19 +6,19 @@
 
 ## 工作流程
 
-| 阶段 | 做什么 | 产物 |
+| 阶段 | 做什么 | 产物（在 `xxx/` 内） |
 |---|---|---|
 | 转写 | 本地 ASR（kotoba-whisper，CPU，不走网络）：日语音频 → 带时间轴日文字幕，含 VAD、幻觉过滤、按标点分段 | `xxx.ja.srt` |
 | 翻译 | 日译中，走 DeepSeek API，分批带上下文、编号校验，异常自动重试降级 | `xxx.zh.srt` |
-| 词汇表 | 本地分词、还原基本形及非官方 JLPT 判级；通过配置的 API 生成简体中文词义 | `xxx.vocab.md` 和/或 `xxx.vocab.json` |
+| 词汇表 | 本地分词、还原基本形及非官方 JLPT 判级；通过配置的 API 生成简体中文词义 | `xxx.vocab.md` 和/或 `xxx.vocab.json`（在词汇目录） |
 | 双语合成 | 日/中逐条对齐（上日下中），纯本地，瞬间完成 | `xxx.bilingual.srt` |
-| 烧录 | ffmpeg 把字幕逐帧画进画面，VideoToolbox 硬编出成片 | `xxx.sub.mp4` |
+| 烧录 | ffmpeg 把字幕逐帧画进画面，VideoToolbox 硬编出成片 | `xxx.mp4` |
 | 音频 | 本地提取源视频第一条音轨并转码为 MP3 | `xxx.mp3` |
-| 课堂高光 | 基于双语字幕做纯文本分析，发现初学者高光事件，产出课堂总结、独立切片与精华视频（本地 `say` 配音） | `xxx.highlights/` |
+| 课堂高光 | 基于双语字幕做纯文本分析，发现初学者高光事件，产出课堂总结、独立切片与精华视频（本地 `say` 配音） | `xxx.highlights.mp4` + `highlights/` |
 
 转写、分词与 JLPT 查询、合成、烧录和音频导出均在本地执行。翻译会把字幕文本发送到配置的 API；词汇释义会把去重后的词及日文例句发送到同一服务；课堂高光分析只发送字幕文字、编号和时间。这些阶段都不会上传音视频或截图。默认 API 模型为 `deepseek-flash`。各阶段耗时见报告 `report-*.md`。
 
-支持 mp4/mov，单文件或文件夹批量；`burn` 还可一次传入多个文件和文件夹。字幕、成片、MP3、日志与报告写入 `-o`，词汇文件可单独指定目录；不修改源视频。
+支持 mp4/mov，单文件或文件夹批量；`burn` 还可一次传入多个文件和文件夹。`run` 为每个视频建立独立文件夹 `<out>/<stem>/`，收纳该视频的字幕、成片 `<stem>.mp4`、MP3、精华视频与 `highlights/`；`run.log` 与 `report-*.md` 仍在 `-o` 根目录，词汇文件可单独指定目录；不修改源视频。
 
 > **`run` 的输入必须是日语语音。** 转写固定 `language="ja"`（kotoba-whisper 是日文专用模型），不做语言检测：喂入非日文音频不会报错，只会静默产出垃圾字幕。`burn` 直接使用已有 SRT，不转写音频。
 
@@ -63,7 +63,7 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 ./ja-video-subtitles run xxx.mp4 -o out --no-highlights        # 跳过课堂高光
 ```
 
-课堂高光默认开启：烧录完成后生成 `xxx.highlights/` 目录，包含课堂总结、独立高光切片和精华视频（见「完整流水线的产物与行为」）。单次跳过用 `--no-highlights`；配置 `highlights.enabled = false` 默认关闭；`--highlights` 可单次重新开启。
+课堂高光默认开启：烧录完成后生成精华视频 `xxx/xxx.highlights.mp4`（与成片 `xxx/xxx.mp4` 并排）和 `xxx/highlights/` 目录（课堂总结与独立高光切片，见「完整流水线的产物与行为」）。单次跳过用 `--no-highlights`；配置 `highlights.enabled = false` 默认关闭；`--highlights` 可单次重新开启。
 
 ### 指定词汇目录与格式
 
@@ -76,7 +76,7 @@ cp config.example.toml config.toml   # 填入 deepseek.api_key
 ./ja-video-subtitles run xxx.mp4 -o media --vocab-output-dir words --vocab-format both
 ```
 
-以上命令把所选 `xxx.vocab.md` 和/或 `xxx.vocab.json` 写入 `words`，字幕、`xxx.sub.mp4` 和 `xxx.mp3` 仍在 `media` 中。不指定时，默认在 `-o` 生成两种词汇格式。命令行选项优先于对应配置，所有相对路径均以执行命令时的目录为准。切换格式会保留旧的未选格式文件，但不将它们列入本次报告。词汇配置 `enabled = false` 时，这些选项不会启用词汇功能。
+以上命令把所选 `xxx.vocab.md` 和/或 `xxx.vocab.json` 写入 `words`，字幕、`xxx.mp4` 和 `xxx.mp3` 仍在按视频文件夹 `media/xxx/` 中。不指定时，默认在 `-o` 根目录生成两种词汇格式（不进入按视频文件夹）。命令行选项优先于对应配置，所有相对路径均以执行命令时的目录为准。切换格式会保留旧的未选格式文件，但不将它们列入本次报告。词汇配置 `enabled = false` 时，这些选项不会启用词汇功能。
 
 ### 把常用参数写进 config.toml
 
@@ -131,16 +131,37 @@ output_dir = "out"
 
 ### 完整流水线的产物与行为
 
-`run` 产物（默认都在 `-o`，词汇文件可另设目录且按所选格式生成）：`xxx.ja.srt`（日文）、`xxx.ja.json`（转写置信度）、`xxx.zh.srt`（中文）、`xxx.vocab.md`（词汇表）、`xxx.vocab.json`（结构化词条及复用元数据）、`xxx.bilingual.srt`（双语，上日下中）、`xxx.sub.mp4`（成片）、`xxx.mp3`（源视频第一条音轨，192 kb/s，与成片同目录）、`xxx.highlights/`（课堂高光，启用时）、`report-<时间戳>.md`（运行报告）、`run.log`（日志）。词汇功能禁用时不生成词汇产物；高光关闭时不创建高光目录。
+`run` 为每个视频建立独立文件夹 `<out>/<stem>/`（以原始视频主干名命名），批次级文件留在 `-o` 根目录。以 `run xxx.mp4 -o out` 为例：
 
-`xxx.highlights/` 内部：`summary.md` 课堂总结（主题、练习内容、重点表达、含源视频时间点的表现亮点）；`index.html` 回看目录（每个切片的标题、源区间、入选理由与播放链接，以及待复核事项）；`highlights.mp4` 精华视频（片头为原片开头画面配本地 `say` 合成的日文摘要配音，原音轨完全不进入片头；随后是保留原声的高光片段与中文串联标题卡）；`clips/clip-NNN.mp4` 独立高光切片（约 3 秒中文标题卡 + 完整事件）；`subtitles/` 存放配套 SRT 供编辑或其他用途——视频已含字幕，观看时请关闭外挂字幕；`analysis/`、`plans/`、`state.json`、`report.json` 记录配对字幕、候选取舍、唯一成片时间轴、断点状态与自动检查结果。
+```
+out/
+├── run.log                            # 完整日志
+├── report-<时间戳>.md                  # 运行报告：配置摘要、各阶段耗时、产物与失败原因
+└── xxx/
+    ├── xxx.ja.srt / xxx.ja.json       # 日文字幕 / 转写置信度（排查幻觉用）
+    ├── xxx.zh.srt                     # 中文字幕
+    ├── xxx.bilingual.srt              # 双语字幕（上日下中）
+    ├── xxx.mp4                        # 双语硬字幕成片（原始文件名）
+    ├── xxx.mp3                        # 源视频第一条音轨，192 kb/s
+    ├── xxx.highlights.mp4             # 精华视频（启用高光时）
+    └── highlights/                    # 其余课堂高光产物
+        ├── summary.md                 # 课堂总结（主题、练习内容、重点表达、表现亮点）
+        ├── index.html                 # 回看目录（切片标题、源区间、入选理由与链接、待复核）
+        ├── clips/xxx.clip-NNN.mp4     # 独立高光切片（约 3 秒中文标题卡 + 完整事件）
+        ├── subtitles/                 # 配套 SRT：xxx.highlights.srt、clips/xxx.clip-NNN.srt
+        ├── analysis/  plans/          # 配对字幕、候选取舍、唯一成片时间轴
+        └── state.json  report.json    # 断点状态与自动检查结果
+```
+
+词汇文件 `xxx.vocab.md` / `xxx.vocab.json`（启用时）写入有效词汇目录——默认是 `-o` 根目录，不进入按视频文件夹。精华视频与成片并排放在视频文件夹根部，不在 `highlights/` 内：片头为原片开头画面配本地 `say` 合成的日文摘要配音（原音轨完全不进入片头），随后是保留原声的高光片段与中文串联标题卡。`highlights/subtitles/` 下的 SRT 供编辑或其他用途——视频已含字幕，观看时请关闭外挂字幕。切片与 SRT 文件名带原始视频主干名，脱离目录也能归属来源。词汇功能禁用时不生成词汇产物；高光关闭时不创建高光目录与精华视频。
 
 行为要点：
 
 - 相对路径以执行命令时的目录为准；config 与模型缓存始终从项目目录读取。
 - 断点续跑：已有合法产物自动跳过；损坏产物自动重跑。`run` 仅复用与当前日文/中文字幕重新合成结果一致的双语字幕；修改任一源字幕后会先更新双语文件再烧录。手工编辑后的独立 SRT 可用 `burn` 原样烧录。
-- 同名成片、MP3 或 `xxx.highlights/highlights.mp4` 在处理开始前统一询问；处理过程不中断。拒绝任一已有输出或标准输入为 EOF 时，跳过该视频。`-y` 或 `--force` 自动覆盖；确认处理后会重新从源视频导出 MP3，导出失败保留此前的正式 MP3。
-- 预检平台、Python 依赖、ffmpeg+libass+MP3 编码器、config/api_key、DeepSeek 连通、模型就绪、磁盘空间和输出目录可写。词汇启用时还会创建并检查词汇目录可写，再检查分词器、本地形态词典及 JLPT 数据的 schema、版本与哈希；高光启用时还会检查 macOS `say` 命令及配置的 `highlights.ja_voice`/`zh_voice` 音色是否已安装（`say -v ?` 列出可用音色）。任一失败会在处理前退出并给出修复指引；关闭对应功能即跳过其检查。
+- 同名成片 `xxx/xxx.mp4`、MP3 或精华视频 `xxx/xxx.highlights.mp4` 在处理开始前统一询问；处理过程不中断。拒绝任一已有输出或标准输入为 EOF 时，跳过该视频。`-y` 或 `--force` 自动覆盖；重跑直接覆盖同名产物，不生成派生文件名；确认处理后会重新从源视频导出 MP3，导出失败保留此前的正式 MP3。
+- 旧版平铺布局（直接写在 `-o` 根目录的 `xxx.sub.mp4`、`xxx.ja.srt` 等）不参与复用：各阶段按新布局重新生成到 `out/xxx/`，旧文件保留原处由你自行清理。
+- 预检平台、Python 依赖、ffmpeg+libass+MP3 编码器、config/api_key、DeepSeek 连通、模型就绪、磁盘空间、输出目录可写，以及每个视频的按视频产物目录 `<out>/<stem>/` 可创建且可写。词汇启用时还会创建并检查词汇目录可写，再检查分词器、本地形态词典及 JLPT 数据的 schema、版本与哈希；高光启用时还会检查 macOS `say` 命令及配置的 `highlights.ja_voice`/`zh_voice` 音色是否已安装（`say -v ?` 列出可用音色）。任一失败会在处理前退出并给出修复指引；关闭对应功能即跳过其检查。
 - 词汇阶段整体失败仍继续合成与烧录，该视频记为 `partial`（部分成功），整批退出码为 `1`；音频导出失败同样记为 `partial`，保留成功成片并继续后续视频；高光阶段失败也遵循同样语义：双语成片与 MP3 不受影响，视频记为 `partial`，批次继续；若仅精华视频合成失败（如配音不可用），已完成的独立切片与分析产物保留，并在总结、回看目录与报告中标注精华版未完成。其他处理失败为 `failed`，确认跳过为 `skipped`。单个词释义重试后失败时，保留词条、留空释义并附 warning，只计为释义降级。报告包含 succeeded/partial/failed/skipped 数量、词汇等级分布、释义降级数量、错误、实际所选词汇路径和成功导出的音频，不含 API key；高光启用时还会记录高光阶段耗时、切片数量与精华实际时长。音频导出失败时保留的旧 MP3 不会被报告为本次成功产物。
 - 高光断点续跑：高光各阶段按源视频、双语字幕、模型、音色、目标时长、片头起点与提示词版本缓存；未变化的阶段直接跳过（含模型调用），`--force` 全部重跑；失败阶段不会覆盖此前成功的产物。
 - 烧录或音频导出中 Ctrl+C 会杀掉 ffmpeg 并清理临时/半成品文件；此前正式 MP3 保留。
@@ -161,7 +182,7 @@ format = "both"  # md、json 或 both
 
 `output_dir` 必须是字符串，`format` 只接受 `md`、`json`、`both`；单次运行可用 `--vocab-output-dir`、`--vocab-format` 覆盖。
 
-两个选项分别按「命令行显式参数 → `config.toml` 对应配置 → 默认值」取值。未传词汇参数时，直接执行 `./ja-video-subtitles run video.mp4 -o out` 就会使用配置文件。默认 `format = "both"` 且 `output_dir = ""`，会把 `video.vocab.md` 和 `video.vocab.json` 放到 `out`，与生成的 `video.sub.mp4` 同目录。只传 `--vocab-format md` 时，目录仍使用配置中的 `output_dir`；只传目录参数时，格式仍使用配置中的 `format`。
+两个选项分别按「命令行显式参数 → `config.toml` 对应配置 → 默认值」取值。未传词汇参数时，直接执行 `./ja-video-subtitles run video.mp4 -o out` 就会使用配置文件。默认 `format = "both"` 且 `output_dir = ""`，会把 `video.vocab.md` 和 `video.vocab.json` 放到 `out` 根目录，与按视频文件夹 `out/video/` 并列。只传 `--vocab-format md` 时，目录仍使用配置中的 `output_dir`；只传目录参数时，格式仍使用配置中的 `format`。
 
 `learner_level` 仅接受 N5/N4/N3/N2/N1，只收录严格更难的等级，因此 N3 用户得到 N2、N1。`include_unknown` 决定是否收录未分级实义词；专有名词会额外标记，未分级不代表一定较难。`enabled`、`include_unknown` 必须是布尔值，`max_examples` 必须是 1–10 的整数。词条包含基本形、读音、表层形式、出现次数、首次时间，以及最多指定条数的不同日文字幕语境和已有中文译句。没有符合条件的词时仍生成合法空词表。
 
@@ -189,7 +210,7 @@ zh_voice = "Tingting"     # 中文串联标题卡配音的 macOS `say` 音色
 
 `enabled` 必须是布尔值；`target_seconds` 必须是 60–900 的整数；`intro_start_seconds` 必须是不小于 0 的数值（原片开头有黑屏时可设为如 20）；音色必须是系统中已安装的非空音色名（`say -v ?` 列出可用音色）。开关可用 `--highlights` / `--no-highlights` 单次覆盖，其余键仅提供配置。
 
-高光关闭（`enabled = false` 或 `--no-highlights`）时不创建 `xxx.highlights/` 目录，也跳过 `say` 与音色预检；`burn` 不读取该节也不生成高光。高光分析只向配置的 API 发送字幕文字、编号和时间，配音与全部媒体处理均在本地完成。
+高光关闭（`enabled = false` 或 `--no-highlights`）时不创建 `xxx/highlights/` 目录与 `xxx/xxx.highlights.mp4`，也跳过 `say` 与音色预检；`burn` 不读取该节也不生成高光。高光分析只向配置的 API 发送字幕文字、编号和时间，配音与全部媒体处理均在本地完成。
 
 ## 测试
 

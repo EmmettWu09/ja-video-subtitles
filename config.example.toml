@@ -19,7 +19,8 @@ model_id = "kotoba-tech/kotoba-whisper-v2.0-faster"
 [run]
 # Positional input: an mp4/mov file or a folder of them.
 # input = "videos"
-# -o/--output-dir: subtitles, sub.mp4, MP3, log, and report.
+# -o/--output-dir: per-video folders (<stem>/ with subtitles, <stem>.mp4,
+# MP3, and highlights), plus log and report at the root.
 # output_dir = "out"
 # --force: redo every stage, ignoring existing artifacts.
 force = false
@@ -45,7 +46,8 @@ yes = false
 # Companion vocabulary glossary; standalone `burn` ignores this section.
 [vocabulary]
 # Omitted CLI options use these settings; each CLI option overrides only its own setting.
-# --vocab-output-dir: empty = -o (the generated .sub.mp4 directory); relative paths use cwd.
+# --vocab-output-dir: empty = -o (the main output root, not the per-video
+# folders); relative paths use cwd.
 output_dir = ""
 # --vocab-format: md, json, or both. Default: write both Markdown and JSON.
 format = "both"
@@ -56,11 +58,12 @@ learner_level = "N3"  # N5, N4, N3, N2, or N1
 include_unknown = true  # Also include ungraded content words and proper nouns.
 max_examples = 3  # Distinct subtitle contexts per word, from 1 to 10.
 
-# Lesson highlights (summary, clips, and an essence video in
-# <stem>.highlights/, generated after burning); standalone `burn` ignores
-# this section. Highlights are ON by default: use --no-highlights or set
-# enabled = false to turn them off completely (no directory, no preflight
-# for voices). --highlights / --no-highlights override `enabled` for one run.
+# Lesson highlights (summary and clips in <stem>/highlights/, plus an essence
+# video <stem>/<stem>.highlights.mp4, generated after burning); standalone
+# `burn` ignores this section. Highlights are ON by default: use
+# --no-highlights or set enabled = false to turn them off completely (no
+# directory, no preflight for voices). --highlights / --no-highlights
+# override `enabled` for one run.
 [highlights]
 enabled = true
 # Target length of the essence video in seconds (60-900). Intro, bridges,

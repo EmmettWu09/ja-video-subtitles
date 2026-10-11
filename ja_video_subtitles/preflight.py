@@ -11,6 +11,7 @@ from . import audio, model as model_mod
 from .api_util import chat_options, safe_error
 from .config import BurnConfig, Config, api_key_valid, vocabulary_output_dir
 from .ffmpeg_util import find_ffmpeg, find_ffprobe
+from .layout import video_output_dir
 
 REQUIRED_PACKAGES = ["faster_whisper", "openai", "srt", "tqdm", "huggingface_hub"]
 BURN_REQUIRED_PACKAGES = ["srt", "tqdm"]
@@ -77,6 +78,8 @@ def run(videos: list[Path], out_dir: Path,
                 "or set vocabulary.enabled = false.")
 
     errors.extend(_check_output(videos, out_dir))
+    for video in videos:
+        errors.extend(_check_video_dir(video_output_dir(out_dir, video.stem)))
     if cfg.vocabulary_enabled:
         try:
             vocab_dir = vocabulary_output_dir(cfg, out_dir)
@@ -188,6 +191,22 @@ def _check_output(videos: list[Path], out_dir: Path) -> list[str]:
         errors.append(f"output directory {out_dir} is not writable: {e}")
 
     return errors
+
+
+def _check_video_dir(video_dir: Path) -> list[str]:
+    """Create and probe the per-video product directory <out>/<stem>/."""
+    if video_dir.exists() and not video_dir.is_dir():
+        return [f"per-video output path {video_dir} exists but is not "
+                "a directory; remove or rename it"]
+    try:
+        video_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(prefix=".write_probe-",
+                                    dir=video_dir) as probe:
+            probe.write(b"probe")
+            probe.flush()
+    except OSError as e:
+        return [f"per-video output directory {video_dir} is not writable: {e}"]
+    return []
 
 
 def _importable(name: str) -> bool:

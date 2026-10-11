@@ -1,7 +1,8 @@
 """Classroom highlight pipeline: transcript pairing, analysis, clips, essence.
 
-Runs after burn inside `run`; writes everything under
-``<out>/<stem>.highlights/``. Stage-level failures propagate to the caller;
+Runs after burn inside `run`; the essence video lands next to the burned
+video at ``<video_dir>/<stem>.highlights.mp4`` and everything else under
+``<video_dir>/highlights/``. Stage-level failures propagate to the caller;
 essence-only failures degrade to ``essence_incomplete`` while keeping clips.
 """
 
@@ -14,6 +15,7 @@ from pathlib import Path
 
 from ..api_util import safe_error
 from ..ffmpeg_util import find_ffprobe, probe_duration
+from ..layout import essence_path, highlights_dir
 from . import analysis, artifacts, render, timeline, transcript, tts
 
 PROMPT_VERSION = analysis.PROMPT_VERSION
@@ -102,17 +104,18 @@ def _mark_done(state: dict, stage: str, key: str) -> None:
     state["stages"][stage] = {"status": "done", "key": key}
 
 
-def _remove_stale_essence(hdir: Path) -> None:
+def _remove_stale_essence(video_dir: Path, hdir: Path, stem: str) -> None:
     """Drop finished essence artifacts before a rerun so an interrupted run
-    never leaves a stale highlights.mp4 that looks successful."""
-    for relative in ("highlights.mp4", "subtitles/highlights.srt"):
-        (hdir / relative).unlink(missing_ok=True)
+    never leaves a stale <stem>.highlights.mp4 that looks successful."""
+    essence_path(video_dir, stem).unlink(missing_ok=True)
+    (hdir / "subtitles" / f"{stem}.highlights.srt").unlink(missing_ok=True)
     for path in (hdir / "work").glob("seg-*.mp4"):
         path.unlink(missing_ok=True)
 
 
-def _remove_stale_clips(hdir: Path) -> None:
-    for pattern in ("clips/clip-*.mp4", "subtitles/clips/clip-*.srt"):
+def _remove_stale_clips(hdir: Path, stem: str) -> None:
+    for pattern in (f"clips/{stem}.clip-*.mp4",
+                    f"subtitles/clips/{stem}.clip-*.srt"):
         for path in hdir.glob(pattern):
             path.unlink(missing_ok=True)
 
@@ -123,15 +126,17 @@ def _make_client(cfg):
                   timeout=120.0, max_retries=0)
 
 
-def generate(video: Path, ja_srt: Path, zh_srt: Path, out_dir: Path,
+def generate(video: Path, ja_srt: Path, zh_srt: Path, video_dir: Path,
              cfg, ffmpeg: Path, client=None, *, force: bool = False
              ) -> HighlightsResult:
-    """Run the highlight pipeline into ``out_dir/<video.stem>.highlights/``.
+    """Run the highlight pipeline for a video folder (<out>/<stem>/).
 
-    Prerequisite-stage failures (transcript/analysis/clips) raise. Essence
-    failures (plan/TTS/render) keep clips and return essence_incomplete.
+    The essence video is written to ``video_dir/<stem>.highlights.mp4``;
+    all other artifacts go to ``video_dir/highlights/``. Prerequisite-stage
+    failures (transcript/analysis/clips) raise. Essence failures
+    (plan/TTS/render) keep clips and return essence_incomplete.
     """
-    hdir = out_dir / f"{video.stem}.highlights"
+    hdir = highlights_dir(video_dir)
     for sub in ("analysis/raw", "plans", "clips", "subtitles/clips", "tts",
                 "work"):
         (hdir / sub).mkdir(parents=True, exist_ok=True)
@@ -208,7 +213,7 @@ def generate(video: Path, ja_srt: Path, zh_srt: Path, out_dir: Path,
                                     .read_text(encoding="utf-8"))
             print("[highlights] clips: reused")
         else:
-            _remove_stale_clips(hdir)
+            _remove_stale_clips(hdir, video.stem)
             clips_plan = render.render_clips(
                 video, entries, bounds, hdir, cfg, ffmpeg, ffprobe)
             (hdir / "plans" / "clips.json").write_text(
@@ -228,7 +233,7 @@ def generate(video: Path, ja_srt: Path, zh_srt: Path, out_dir: Path,
                                   .read_text(encoding="utf-8"))
                 print("[highlights] plan: reused")
             else:
-                _remove_stale_essence(hdir)
+                _remove_stale_essence(video_dir, hdir, video.stem)
                 plan = timeline.build_essence_plan(
                     outcome.summary, bounds,
                     cfg.highlights_target_seconds,
@@ -255,7 +260,8 @@ def generate(video: Path, ja_srt: Path, zh_srt: Path, out_dir: Path,
                 print("[highlights] render: reused")
             else:
                 plan = render.render_essence(
-                    video, entries, plan, manifest, hdir, cfg, ffmpeg, ffprobe)
+                    video, entries, plan, manifest, hdir,
+                    essence_path(video_dir, video.stem), cfg, ffmpeg, ffprobe)
                 (hdir / "plans" / "highlights.json").write_text(
                     json.dumps(plan, ensure_ascii=False, indent=2) + "\n",
                     encoding="utf-8")

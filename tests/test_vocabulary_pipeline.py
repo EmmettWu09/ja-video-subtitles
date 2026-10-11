@@ -49,10 +49,15 @@ class TestVocabularyPipeline(unittest.TestCase):
     def make_video(self, stem):
         video = self.inputs / f"{stem}.mp4"
         video.write_bytes(b"source")
-        (self.out / f"{stem}.ja.srt").write_text(SRT, encoding="utf-8")
-        (self.out / f"{stem}.zh.srt").write_text(
+        video_dir = self.out / stem
+        video_dir.mkdir(parents=True)
+        (video_dir / f"{stem}.ja.srt").write_text(SRT, encoding="utf-8")
+        (video_dir / f"{stem}.zh.srt").write_text(
             SRT.replace("確認しました。", "已经确认了。"), encoding="utf-8")
         return video
+
+    def video_dir(self, stem="first"):
+        return self.out / stem
 
     def glossary(self, ja, zh, output, cfg, force=False):
         stem = ja.name.removesuffix(".ja.srt")
@@ -67,15 +72,16 @@ class TestVocabularyPipeline(unittest.TestCase):
         target.write_bytes(b"mp3 audio")
         return target
 
-    def encode(self, video, subtitle, output, *_):
+    def encode(self, video, subtitle, out_dir, *_, output=None):
         self.assertIn("已经确认了。", subtitle.read_text(encoding="utf-8"))
-        target = output / f"{video.stem}.sub.mp4"
+        target = output or out_dir / f"{video.stem}.sub.mp4"
         target.write_bytes(b"encoded")
         return target
 
     def process(self, force=False):
         record = VideoRecord(self.video.name, self.video.stem)
-        cli.process_video(self.video, self.out, self.cfg, self.ffmpeg, force, record)
+        cli.process_video(self.video, self.video_dir(self.video.stem),
+                          self.cfg, self.ffmpeg, force, record)
         return record
 
     def test_empty_glossary_still_merges_and_burns(self):
@@ -84,10 +90,10 @@ class TestVocabularyPipeline(unittest.TestCase):
         self.assertEqual([s.name for s in record.stages],
                          ["transcribe", "translate", "vocabulary", "merge", "burn", "audio"])
         self.assertIn("no target words", record.stages[2].note)
-        self.assertTrue((self.out / "first.vocab.md").exists())
+        self.assertTrue((self.video_dir() / "first.vocab.md").exists())
         self.burn.assert_called_once()
-        self.audio.assert_called_once_with(self.video, self.out, self.ffmpeg)
-        self.assertTrue((self.out / "first.mp3").exists())
+        self.audio.assert_called_once_with(self.video, self.video_dir(), self.ffmpeg)
+        self.assertTrue((self.video_dir() / "first.mp3").exists())
 
     def test_disabled_vocabulary_is_not_run(self):
         self.cfg.vocabulary_enabled = False
@@ -103,11 +109,11 @@ class TestVocabularyPipeline(unittest.TestCase):
         self.assertEqual(record.stages[2].status, "failed")
         self.assertIn("[REDACTED]", record.error)
         self.assertNotIn(self.cfg.api_key, record.error + self.stderr.getvalue())
-        self.assertTrue((self.out / "first.sub.mp4").exists())
+        self.assertTrue((self.video_dir() / "first.mp4").exists())
 
     def test_force_reaches_glossary(self):
         self.transcribe.side_effect = None
-        self.transcribe.return_value = self.out / "first.ja.srt", 0
+        self.transcribe.return_value = self.video_dir() / "first.ja.srt", 0
         self.translate.side_effect = None
         self.process(force=True)
         self.assertTrue(self.generate.call_args.kwargs["force"])
@@ -118,12 +124,12 @@ class TestVocabularyPipeline(unittest.TestCase):
         first = self.process()
         self.assertEqual(first.stages[3].status, "done")
         self.assertEqual(self.process().stages[3].status, "skipped")
-        translation = self.out / "first.zh.srt"
+        translation = self.video_dir() / "first.zh.srt"
         translation.write_text(translation.read_text(encoding="utf-8").replace(
             "已经确认了。", "已经确认了。[修订]"), encoding="utf-8")
         record = self.process()
         self.assertEqual(record.stages[3].status, "done")
-        self.assertIn("[修订]", (self.out / "first.bilingual.srt").read_text(encoding="utf-8"))
+        self.assertIn("[修订]", (self.video_dir() / "first.bilingual.srt").read_text(encoding="utf-8"))
         self.assertIn("N2=0, N1=0, 未分级=0", record.stages[2].note)
 
     def test_partial_batch_continues_with_nonzero_status_and_report(self):
@@ -141,12 +147,12 @@ class TestVocabularyPipeline(unittest.TestCase):
                 vocab_output_dir=None, vocab_format=None))
         self.assertEqual(code, 1)
         self.assertEqual(self.burn.call_count, 2)
-        self.assertTrue((self.out / f"{second.stem}.sub.mp4").exists())
+        self.assertTrue((self.video_dir("second") / "second.mp4").exists())
         report = next(self.out.glob("report-*.md")).read_text(encoding="utf-8")
         self.assertIn("1 succeeded / 0 failed / 0 skipped / 1 partial", report)
         self.assertIn("| Vocabulary | failed |", report)
         self.assertIn("morphology unavailable", report)
-        self.assertIn("first.sub.mp4", report)
+        self.assertIn("first/first.mp4", report)
         self.assertIn("second.vocab.json", report)
         self.assertIn("second.vocab.md", report)
         self.assertNotIn(self.cfg.api_key, report)
@@ -178,13 +184,13 @@ class TestVocabularyPipeline(unittest.TestCase):
                     self.assertEqual(f"{words}/first.vocab.{suffix}" in report, selected)
                     self.assertNotIn(f"- `first.vocab.{suffix}`", report)
                 self.assertIn(f"format={fmt}", report)
-                self.assertIn("first.mp3", report)
+                self.assertIn("first/first.mp3", report)
                 self.assertIn("| MP3 export | done |", report)
-                self.assertTrue((self.out / "first.sub.mp4").is_file())
+                self.assertTrue((self.video_dir() / "first.mp4").is_file())
 
     def test_audio_failure_keeps_video_and_continues_batch(self):
         self.make_video("second")
-        old_audio = self.out / "first.mp3"
+        old_audio = self.video_dir() / "first.mp3"
         old_audio.write_bytes(b"old audio")
 
         def export(video, *args):
@@ -196,12 +202,12 @@ class TestVocabularyPipeline(unittest.TestCase):
         self.assertEqual(self.run_command(), 1)
         self.assertEqual(self.burn.call_count, 2)
         self.assertEqual(old_audio.read_bytes(), b"old audio")
-        self.assertTrue((self.out / "first.sub.mp4").is_file())
+        self.assertTrue((self.video_dir() / "first.mp4").is_file())
         report = next(self.out.glob("report-*.md")).read_text(encoding="utf-8")
         self.assertIn("1 succeeded / 0 failed / 0 skipped / 1 partial", report)
         self.assertIn("| MP3 export | failed |", report)
-        self.assertNotIn("- `first.mp3`", report)
-        self.assertIn("second.mp3", report)
+        self.assertNotIn("first/first.mp3", report)
+        self.assertIn("second/second.mp3", report)
 
     def test_vocab_and_audio_failures_are_both_retained(self):
         self.generate.side_effect = RuntimeError("vocabulary unavailable")
@@ -210,10 +216,10 @@ class TestVocabularyPipeline(unittest.TestCase):
         self.assertEqual(record.status, "partial")
         self.assertIn("vocabulary: vocabulary unavailable", record.error)
         self.assertIn("audio: audio unavailable", record.error)
-        self.assertTrue((self.out / "first.sub.mp4").is_file())
+        self.assertTrue((self.video_dir() / "first.mp4").is_file())
 
     def test_existing_mp3_requires_confirmation_even_without_sub_mp4(self):
-        target = self.out / "first.mp3"
+        target = self.video_dir() / "first.mp3"
         target.write_bytes(b"keep me")
         with mock.patch("builtins.input", side_effect=EOFError) as prompt:
             self.assertEqual(self.run_command(yes=False), 0)
@@ -222,7 +228,7 @@ class TestVocabularyPipeline(unittest.TestCase):
         self.audio.assert_not_called()
         self.assertEqual(target.read_bytes(), b"keep me")
         self.transcribe.side_effect = None
-        self.transcribe.return_value = self.out / "first.ja.srt", 0
+        self.transcribe.return_value = self.video_dir() / "first.ja.srt", 0
         self.translate.side_effect = None
         with mock.patch("builtins.input", side_effect=AssertionError("unexpected prompt")):
             self.assertEqual(self.run_command(yes=False, force=True), 0)
@@ -231,7 +237,7 @@ class TestVocabularyPipeline(unittest.TestCase):
         words = self.root / "words"
         words.mkdir()
         self.cfg.vocabulary_output_dir = str(words)
-        for target in (self.out / "first.mp3", words / "first.vocab.md"):
+        for target in (self.video_dir() / "first.mp3", words / "first.vocab.md"):
             with self.subTest(target=target):
                 target.symlink_to(self.video)
                 try:
@@ -240,6 +246,39 @@ class TestVocabularyPipeline(unittest.TestCase):
                     self.burn.assert_not_called()
                 finally:
                     target.unlink()
+
+    def test_old_flat_layout_products_are_not_reused(self):
+        """Legacy flat artifacts in the output root never satisfy the new layout."""
+        for suffix, text in (("ja.srt", SRT),
+                             ("zh.srt", SRT.replace("確認しました。", "已经确认了。")),
+                             ("sub.mp4", "old flat video")):
+            (self.out / f"first.{suffix}").write_text(text, encoding="utf-8")
+        for stale in self.video_dir().iterdir():  # nothing valid in <out>/first/
+            stale.unlink()
+
+        def fake_transcribe(video, out_dir, model):
+            path = out_dir / "first.ja.srt"
+            path.write_text(SRT, encoding="utf-8")
+            return path, 0
+
+        def fake_translate(ja_srt, out_dir, client, cfg):
+            path = out_dir / "first.zh.srt"
+            path.write_text(SRT.replace("確認しました。", "已经确认了。"),
+                            encoding="utf-8")
+            return path
+
+        self.transcribe.side_effect = fake_transcribe
+        self.translate.side_effect = fake_translate
+        record = self.process()
+        self.transcribe.assert_called_once()
+        self.translate.assert_called_once()
+        self.assertEqual([s.status for s in record.stages[:2]], ["done", "done"])
+        self.assertTrue((self.video_dir() / "first.mp4").is_file())
+        # The legacy flat files are left untouched, not moved or deleted.
+        self.assertEqual((self.out / "first.ja.srt").read_text(encoding="utf-8"),
+                         SRT)
+        self.assertEqual((self.out / "first.sub.mp4").read_text(encoding="utf-8"),
+                         "old flat video")
 
     def test_batch_output_stem_collision_rejected(self):
         (self.inputs / "first.mov").write_bytes(b"another source")

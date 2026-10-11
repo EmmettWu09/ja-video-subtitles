@@ -148,9 +148,11 @@ def _index_html(video_name: str, clips_plan: list[dict], selection,
         parts.append(f"<p class=\"warn\">精华版未完成：{esc(note or '原因见 report.json')}；"
                      "以下独立切片与分析产物已保留。</p>")
     elif plan is not None:
+        essence_name = f"{Path(video_name).stem}.highlights.mp4"
+        srt_name = f"{Path(video_name).stem}.highlights.srt"
         parts.append(f"<h2>精华版（{plan['total_ms'] // 1000} 秒）</h2>")
-        parts.append('<p><a href="highlights.mp4">highlights.mp4</a> · '
-                     '<a href="subtitles/highlights.srt">配套 SRT</a></p>')
+        parts.append(f'<p><a href="../{esc(essence_name)}">{esc(essence_name)}</a> · '
+                     f'<a href="subtitles/{esc(srt_name)}">配套 SRT</a></p>')
         if plan.get("draft"):
             parts.append(f"<p class=\"warn\">{esc(plan['draft'])}</p>")
     parts.append(f"<h2>独立高光切片（{len(clips_plan)}）</h2>")
@@ -189,33 +191,39 @@ def write_all(hdir: Path, video: Path, entries: list, outcome, selection,
               bounds: list[dict], clips_plan: list[dict], plan: dict | None,
               essence_incomplete: bool, note: str, ffmpeg: Path,
               ffprobe: Path) -> dict:
-    """Write summary.md, index.html and report.json; return the report."""
+    """Write summary.md, index.html and report.json; return the report.
+
+    The essence video lives one level above ``hdir`` (``../<stem>.highlights.mp4``),
+    so media checks reference it with a parent-relative path.
+    """
     anomalies: list[str] = []
     flagged = [{"index": e.index, "flags": e.flags} for e in entries if e.flags]
     if flagged:
         anomalies.append(f"{len(flagged)} subtitle cue(s) flagged during "
                          "pairing (see transcript.flagged)")
+    essence_rel = f"../{video.stem}.highlights.mp4"
+    essence_srt_rel = f"subtitles/{video.stem}.highlights.srt"
     media_files = [clip["file"] for clip in clips_plan]
     if plan is not None:
-        media_files.append("highlights.mp4")
+        media_files.append(essence_rel)
     media_checks = _check_media(hdir, media_files, ffprobe, anomalies)
     media_ms = {}
     for clip, check in zip(clips_plan, media_checks):
         if check.get("duration_ms") is not None:
             media_ms[clip["srt"]] = check["duration_ms"]
     if plan is not None and media_checks[-1].get("duration_ms") is not None:
-        media_ms["subtitles/highlights.srt"] = media_checks[-1]["duration_ms"]
+        media_ms[essence_srt_rel] = media_checks[-1]["duration_ms"]
     srt_files = [clip["srt"] for clip in clips_plan]
     if plan is not None:
-        srt_files.append("subtitles/highlights.srt")
+        srt_files.append(essence_srt_rel)
     srt_checks = _check_srts(hdir, srt_files, media_ms, anomalies)
-    if plan is not None and media_ms.get("subtitles/highlights.srt") is not None:
+    if plan is not None and media_ms.get(essence_srt_rel) is not None:
         declared = plan["total_ms"]
-        actual = media_ms["subtitles/highlights.srt"]
+        actual = media_ms[essence_srt_rel]
         if abs(actual - declared) > 1500:
             anomalies.append(
-                f"highlights.mp4 duration {actual}ms differs from the plan "
-                f"timeline {declared}ms")
+                f"{video.stem}.highlights.mp4 duration {actual}ms differs "
+                f"from the plan timeline {declared}ms")
     for clip, check in zip(clips_plan, media_checks):
         expected = (clip["source_end_ms"] - clip["source_start_ms"]
                     + timeline.CARD_NOMINAL_MS)

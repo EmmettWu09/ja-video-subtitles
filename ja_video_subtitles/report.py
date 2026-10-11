@@ -11,12 +11,14 @@ from pathlib import Path
 
 import srt
 
+from .layout import essence_path, highlights_dir, video_output_dir
+
 STAGE_LABELS = {"transcribe": "Transcribe", "translate": "Translate",
                 "vocabulary": "Vocabulary",
                 "merge": "Bilingual merge", "burn": "Burn", "audio": "MP3 export",
                 "highlights": "Highlights"}
 PRODUCT_SUFFIXES = [".ja.srt", ".ja.json", ".zh.srt", ".bilingual.srt",
-                    ".vocab.json", ".vocab.md", ".sub.mp4", ".mp3"]
+                    ".vocab.json", ".vocab.md", ".mp4", ".mp3"]
 
 
 @dataclass
@@ -155,12 +157,23 @@ class Reporter:
         self.path.write_text("\n".join(L), encoding="utf-8")
         return self.path
 
+    def _display_path(self, path: Path) -> str:
+        """Show paths relative to the output root when possible."""
+        try:
+            return str(path.relative_to(self.out_dir))
+        except ValueError:
+            return str(path.absolute())
+
     def _product_lines(self, record: VideoRecord) -> list[str]:
         """List selected outputs at their actual paths, excluding failed audio."""
         rows = []
+        video_dir = video_output_dir(self.out_dir, record.stem)
         for suffix in ([".sub.mp4"] if self.burn_only else PRODUCT_SUFFIXES):
-            directory = self.out_dir
-            if suffix.startswith(".vocab.") and self.vocabulary_config is not None:
+            if self.burn_only:
+                p = self.out_dir / f"{record.stem}{suffix}"
+            elif suffix.startswith(".vocab."):
+                if self.vocabulary_config is None:
+                    continue
                 # Format switches leave old files intact; list only this selection.
                 cfg = self.vocabulary_config
                 if not cfg["enabled"]:
@@ -168,15 +181,16 @@ class Reporter:
                 if cfg.get("format", "both") not in ("both", suffix.rsplit(".", 1)[1]):
                     continue
                 directory = Path(cfg.get("output_dir", self.out_dir))
+                p = directory / f"{record.stem}{suffix}"
+            else:
+                p = video_dir / f"{record.stem}{suffix}"
             if suffix == ".mp3" and any(
                     stage.name == "audio" and stage.status == "failed"
                     for stage in record.stages):
                 continue
-            p = directory / f"{record.stem}{suffix}"
             if not p.is_file():
                 continue
-            display_path = p.name if directory.resolve() == self.out_dir.resolve() else str(p.absolute())
-            line = f"- `{display_path}` ({_fmt_size(p.stat().st_size)}"
+            line = f"- `{self._display_path(p)}` ({_fmt_size(p.stat().st_size)}"
             if suffix.endswith(".srt"):
                 n = _count_srt(p)
                 if n is not None:
@@ -187,11 +201,13 @@ class Reporter:
                 and not any(stage.name == "highlights"
                             and stage.status == "failed"
                             for stage in record.stages)):
-            essence = (self.out_dir / f"{record.stem}.highlights"
-                       / "highlights.mp4")
+            essence = essence_path(video_dir, record.stem)
             if essence.is_file():
-                rows.append(f"- `{essence.relative_to(self.out_dir)}` "
+                rows.append(f"- `{self._display_path(essence)}` "
                             f"({_fmt_size(essence.stat().st_size)})")
+            hdir = highlights_dir(video_dir)
+            if hdir.is_dir():
+                rows.append(f"- `{self._display_path(hdir)}/` (directory)")
         if not rows:
             return []
         return ["", "Products:", ""] + rows

@@ -203,8 +203,8 @@ class TestRunFallback(unittest.TestCase):
     def test_config_only_run_uses_all_mapped_options(self):
         video = self.video()
         out = self.root / "media"
-        out.mkdir()
-        (out / "a.sub.mp4").write_bytes(b"old output")
+        (out / "a").mkdir(parents=True)
+        (out / "a" / "a.mp4").write_bytes(b"old output")
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "{out}"\n'
                           'force = true\nyes = true\n')
         with mock.patch("builtins.input", side_effect=AssertionError("prompted")):
@@ -216,7 +216,7 @@ class TestRunFallback(unittest.TestCase):
         self.assertIs(cfg.run_force, True)
         self.assertEqual(self.process.call_args.args[2].run_yes, True)
         self.assertEqual(self.process.call_args.args[4], True)
-        self.assertEqual((out / "a.sub.mp4").read_bytes(), b"old output")
+        self.assertEqual((out / "a" / "a.mp4").read_bytes(), b"old output")
 
     def test_cli_overrides_only_the_given_fields(self):
         video, cli_video = self.video("saved.mp4"), self.video("cli.mp4")
@@ -266,8 +266,8 @@ class TestRunFallback(unittest.TestCase):
     def test_boolean_tri_state_merge(self):
         video = self.video()
         out = self.root / "out"
-        out.mkdir()
-        (out / "a.sub.mp4").write_bytes(b"old output")
+        (out / "a").mkdir(parents=True)
+        (out / "a" / "a.mp4").write_bytes(b"old output")
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "{out}"\n'
                           'force = true\nyes = true\n')
         with mock.patch("builtins.input", return_value="n") as prompt:
@@ -280,8 +280,8 @@ class TestRunFallback(unittest.TestCase):
     def test_no_yes_does_not_cancel_force_and_vice_versa(self):
         video = self.video()
         out = self.root / "out"
-        out.mkdir()
-        (out / "a.sub.mp4").write_bytes(b"old output")
+        (out / "a").mkdir(parents=True)
+        (out / "a" / "a.mp4").write_bytes(b"old output")
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "{out}"\n'
                           'force = true\nyes = true\n')
         for options, expected_force in ((("--no-yes",), True),
@@ -297,8 +297,8 @@ class TestRunFallback(unittest.TestCase):
     def test_explicit_switches_beat_configured_false(self):
         video = self.video()
         out = self.root / "out"
-        out.mkdir()
-        (out / "a.sub.mp4").write_bytes(b"old output")
+        (out / "a").mkdir(parents=True)
+        (out / "a" / "a.mp4").write_bytes(b"old output")
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "{out}"\n'
                           'force = false\nyes = false\n')
         with mock.patch("builtins.input", side_effect=AssertionError("prompted")):
@@ -453,8 +453,8 @@ class TestRunFallback(unittest.TestCase):
     def test_config_switches_cannot_bypass_target_protection(self):
         video = self.video()
         out = self.root / "out"
-        out.mkdir()
-        (out / "a.sub.mp4").symlink_to(video)
+        (out / "a").mkdir(parents=True)
+        (out / "a" / "a.mp4").symlink_to(video)
         self.write_config(f'[run]\ninput = "{video}"\noutput_dir = "{out}"\n'
                           'force = true\nyes = true\n')
         code, _, stderr = self.invoke_run()

@@ -136,49 +136,54 @@ def media(tmp_path_factory):
     return video, ja, zh
 
 
-LAYOUT = ("summary.md", "index.html", "highlights.mp4",
-          "clips/clip-001.mp4", "subtitles/highlights.srt",
-          "subtitles/clips/clip-001.srt", "analysis/transcript.json",
+LAYOUT = ("summary.md", "index.html",
+          "clips/lesson.clip-001.mp4", "subtitles/lesson.highlights.srt",
+          "subtitles/clips/lesson.clip-001.srt", "analysis/transcript.json",
           "analysis/candidates.json", "plans/clips.json",
           "plans/highlights.json", "state.json", "report.json")
 
 
 def test_generate_end_to_end_and_resume(media, tmp_path):
     video, ja, zh = media
-    out = tmp_path / "out"
+    video_dir = tmp_path / "out" / "lesson"
+    video_dir.mkdir(parents=True)
     client = FakeClient(response(CANDIDATE), response(SUMMARY))
-    result = generate(video, ja, zh, out, make_cfg(), FFMPEG, client=client)
+    result = generate(video, ja, zh, video_dir, make_cfg(), FFMPEG,
+                      client=client)
 
-    hdir = out / "lesson.highlights"
+    hdir = video_dir / "highlights"
     assert result.output_dir == hdir
     for relative in LAYOUT:
         assert (hdir / relative).is_file(), f"missing {relative}"
+    essence_path = video_dir / "lesson.highlights.mp4"
+    assert essence_path.is_file()  # next to the burned video, not in highlights/
     assert result.clip_count == 1
     assert not result.essence_incomplete
     assert result.essence_seconds is not None
     assert client.calls == 2  # one chunk analysis + one synthesis
 
     ffprobe = find_ffprobe(FFMPEG)
-    essence = probe_duration(ffprobe, hdir / "highlights.mp4")
+    essence = probe_duration(ffprobe, essence_path)
     assert essence == pytest.approx(result.essence_seconds, abs=1.5)
     # Intro (15-25s) + ~15s event + ~3s closing.
     assert 25 <= essence <= 60
-    clip = probe_duration(ffprobe, hdir / "clips" / "clip-001.mp4")
+    clip = probe_duration(ffprobe, hdir / "clips" / "lesson.clip-001.mp4")
     assert 15 <= clip <= 25  # ~3s title card + ~15s event
 
-    for relative in ("subtitles/highlights.srt",
-                     "subtitles/clips/clip-001.srt"):
+    for relative in ("subtitles/lesson.highlights.srt",
+                     "subtitles/clips/lesson.clip-001.srt"):
         text = (hdir / relative).read_text(encoding="utf-8")
         assert valid_srt(text), f"invalid SRT: {relative}"
         assert "テスト" in text
     # Intro region carries the summary narration, not classroom dialogue.
-    highlights_srt = (hdir / "subtitles" / "highlights.srt") \
+    highlights_srt = (hdir / "subtitles" / "lesson.highlights.srt") \
         .read_text(encoding="utf-8")
     assert "今日は練習をしました。" in highlights_srt
 
     index_html = (hdir / "index.html").read_text(encoding="utf-8")
     assert "观看时关闭外挂字幕" in index_html
     assert "完整回答问题" in index_html
+    assert 'href="../lesson.highlights.mp4"' in index_html
     summary_md = (hdir / "summary.md").read_text(encoding="utf-8")
     assert "课堂练习" in summary_md
     assert "草稿" in summary_md  # short material: marked as a shorter draft
@@ -199,14 +204,14 @@ def test_generate_end_to_end_and_resume(media, tmp_path):
         assert prev_end > prev_start
 
     # Resume with identical inputs: no API call, products reused.
-    resumed = generate(video, ja, zh, out, make_cfg(), FFMPEG,
+    resumed = generate(video, ja, zh, video_dir, make_cfg(), FFMPEG,
                        client=ExplodingClient())
     assert resumed.clip_count == 1
     assert resumed.essence_seconds == pytest.approx(result.essence_seconds,
                                                     abs=0.1)
 
     # force=True reruns everything (needs the model again).
-    forced = generate(video, ja, zh, out, make_cfg(), FFMPEG,
+    forced = generate(video, ja, zh, video_dir, make_cfg(), FFMPEG,
                       client=FakeClient(response(CANDIDATE),
                                         response(SUMMARY)), force=True)
     assert forced.clip_count == 1
@@ -215,17 +220,19 @@ def test_generate_end_to_end_and_resume(media, tmp_path):
 
 def test_essence_failure_keeps_clips_and_recovers(media, tmp_path):
     video, ja, zh = media
-    out = tmp_path / "out"
+    video_dir = tmp_path / "out" / "lesson"
+    video_dir.mkdir(parents=True)
     cfg = make_cfg(highlights_ja_voice="No-Such-Voice")
     client = FakeClient(response(CANDIDATE), response(SUMMARY))
-    result = generate(video, ja, zh, out, cfg, FFMPEG, client=client)
+    result = generate(video, ja, zh, video_dir, cfg, FFMPEG, client=client)
 
-    hdir = out / "lesson.highlights"
+    hdir = video_dir / "highlights"
+    essence_path = video_dir / "lesson.highlights.mp4"
     assert result.essence_incomplete
     assert result.essence_seconds is None
     assert result.clip_count == 1
-    assert (hdir / "clips" / "clip-001.mp4").is_file()
-    assert not (hdir / "highlights.mp4").exists()
+    assert (hdir / "clips" / "lesson.clip-001.mp4").is_file()
+    assert not essence_path.exists()
     summary_md = (hdir / "summary.md").read_text(encoding="utf-8")
     assert "精华版未完成" in summary_md
     index_html = (hdir / "index.html").read_text(encoding="utf-8")
@@ -234,11 +241,11 @@ def test_essence_failure_keeps_clips_and_recovers(media, tmp_path):
     assert report["essence_incomplete"]
 
     # Fixing the voice resumes from the failed stage without new API calls.
-    recovered = generate(video, ja, zh, out, make_cfg(), FFMPEG,
+    recovered = generate(video, ja, zh, video_dir, make_cfg(), FFMPEG,
                          client=ExplodingClient())
     assert not recovered.essence_incomplete
     assert recovered.essence_seconds is not None
-    assert (hdir / "highlights.mp4").is_file()
+    assert essence_path.is_file()
     # Clips were reused, not re-rendered: the state file records done stages.
     state = json.loads((hdir / "state.json").read_text(encoding="utf-8"))
     assert state["stages"]["clips"]["status"] == "done"

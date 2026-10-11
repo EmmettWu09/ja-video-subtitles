@@ -120,22 +120,22 @@ class TestHighlightsSwitch(unittest.TestCase):
     def test_existing_essence_requires_confirmation(self):
         video = self.video()
         out = self.root / "out"
-        (out / "a.highlights").mkdir(parents=True)
-        (out / "a.highlights" / "highlights.mp4").write_bytes(b"old essence")
+        (out / "a").mkdir(parents=True)
+        (out / "a" / "a.highlights.mp4").write_bytes(b"old essence")
         self.write_config("")
         with mock.patch("builtins.input", side_effect=EOFError):
             code, stdout, _ = self.invoke_run(video, "-o", out)
         self.assertEqual(code, 0)
         self.assertIn("1 skipped", stdout)
         self.process.assert_not_called()
-        self.assertEqual((out / "a.highlights" / "highlights.mp4").read_bytes(),
+        self.assertEqual((out / "a" / "a.highlights.mp4").read_bytes(),
                          b"old essence")
 
     def test_existing_essence_ignored_when_highlights_disabled(self):
         video = self.video()
         out = self.root / "out"
-        (out / "a.highlights").mkdir(parents=True)
-        (out / "a.highlights" / "highlights.mp4").write_bytes(b"old essence")
+        (out / "a").mkdir(parents=True)
+        (out / "a" / "a.highlights.mp4").write_bytes(b"old essence")
         self.write_config("")
         with mock.patch("builtins.input",
                         side_effect=AssertionError("unexpected prompt")):
@@ -146,8 +146,8 @@ class TestHighlightsSwitch(unittest.TestCase):
     def test_highlights_target_cannot_alias_source_video(self):
         video = self.video()
         out = self.root / "out"
-        (out / "a.highlights").mkdir(parents=True)
-        (out / "a.highlights" / "highlights.mp4").symlink_to(video)
+        (out / "a").mkdir(parents=True)
+        (out / "a" / "a.highlights.mp4").symlink_to(video)
         self.write_config("")
         code, _, stderr = self.invoke_run(video, "-o", out, "-y")
         self.assertEqual(code, 2)
@@ -187,16 +187,16 @@ class TestHighlightsStage(unittest.TestCase):
     def test_stage_runs_after_audio_and_records_note(self):
         self.generate.return_value = SimpleNamespace(
             clip_count=3, essence_seconds=233.6, essence_incomplete=False,
-            output_dir=self.out / "lesson.highlights", note="")
+            output_dir=self.out / "highlights", note="")
         record = self.process(make_cfg())
         self.assertEqual(record.status, "done")
         self.assertEqual(record.stages[-1].name, "highlights")
         self.assertEqual(record.stages[-1].status, "done")
         self.assertIn("3 clips", record.stages[-1].note)
         self.assertIn("234s", record.stages[-1].note)
-        self.assertEqual(self.generate.call_args.args[:3],
+        self.assertEqual(self.generate.call_args.args[:4],
                          (self.video, self.out / "lesson.ja.srt",
-                          self.out / "lesson.zh.srt"))
+                          self.out / "lesson.zh.srt", self.out))
 
     def test_stage_failure_marks_partial_and_keeps_products(self):
         self.generate.side_effect = RuntimeError("analysis down")
@@ -244,22 +244,25 @@ class TestHighlightsPreflight(unittest.TestCase):
 
 
 class TestHighlightsReport(unittest.TestCase):
+    def make_reporter(self, d, *, enabled=True):
+        from ja_video_subtitles.report import Reporter
+        return Reporter(d, version="0.1.1", asr_model="k", base_url="b",
+                        translate_model="m", bitrate="8M",
+                        highlights_config={"enabled": enabled,
+                                           "target_seconds": 240,
+                                           "intro_start_seconds": 0,
+                                           "ja_voice": "Kyoko",
+                                           "zh_voice": "Tingting"})
+
     def test_report_shows_highlights_summary_and_products(self):
-        from ja_video_subtitles.report import (Reporter, StageRecord,
-                                               VideoRecord)
+        from ja_video_subtitles.report import StageRecord, VideoRecord
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            (d / "v.sub.mp4").write_bytes(b"x" * 2048)
-            hdir = d / "v.highlights"
-            hdir.mkdir()
-            (hdir / "highlights.mp4").write_bytes(b"y" * 1024)
-            rep = Reporter(d, version="0.1.1", asr_model="k", base_url="b",
-                           translate_model="m", bitrate="8M",
-                           highlights_config={"enabled": True,
-                                              "target_seconds": 240,
-                                              "intro_start_seconds": 0,
-                                              "ja_voice": "Kyoko",
-                                              "zh_voice": "Tingting"})
+            video_dir = d / "v"
+            (video_dir / "highlights").mkdir(parents=True)
+            (video_dir / "v.mp4").write_bytes(b"x" * 2048)
+            (video_dir / "v.highlights.mp4").write_bytes(b"y" * 1024)
+            rep = self.make_reporter(d)
             record = VideoRecord("v.mp4", "v")
             record.stages = [StageRecord("highlights", "done", 12.0,
                                          "3 clips; essence 234s")]
@@ -267,40 +270,36 @@ class TestHighlightsReport(unittest.TestCase):
             text = rep.write().read_text(encoding="utf-8")
             self.assertIn("Highlights: enabled, target=240s", text)
             self.assertIn("| Highlights | done |", text)
-            self.assertIn("v.highlights/highlights.mp4", text)
+            self.assertIn("v/v.mp4", text)
+            self.assertIn("v/v.highlights.mp4", text)
+            self.assertIn("v/highlights/", text)
 
     def test_report_excludes_essence_after_stage_failure(self):
-        from ja_video_subtitles.report import (Reporter, StageRecord,
-                                               VideoRecord)
+        from ja_video_subtitles.report import StageRecord, VideoRecord
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            (d / "v.sub.mp4").write_bytes(b"x" * 2048)
-            hdir = d / "v.highlights"
-            hdir.mkdir()
-            (hdir / "highlights.mp4").write_bytes(b"y" * 1024)
-            rep = Reporter(d, version="0.1.1", asr_model="k", base_url="b",
-                           translate_model="m", bitrate="8M",
-                           highlights_config={"enabled": True,
-                                              "target_seconds": 240,
-                                              "intro_start_seconds": 0,
-                                              "ja_voice": "Kyoko",
-                                              "zh_voice": "Tingting"})
+            video_dir = d / "v"
+            (video_dir / "highlights").mkdir(parents=True)
+            (video_dir / "v.mp4").write_bytes(b"x" * 2048)
+            (video_dir / "v.highlights.mp4").write_bytes(b"y" * 1024)
+            rep = self.make_reporter(d)
             record = VideoRecord("v.mp4", "v", status="partial",
                                  error="highlights: boom")
             record.stages = [StageRecord("highlights", "failed", 1.0, "boom")]
             rep.records.append(record)
             text = rep.write().read_text(encoding="utf-8")
             self.assertIn("| Highlights | failed |", text)
-            self.assertNotIn("v.highlights/highlights.mp4", text)
+            self.assertNotIn("v.highlights.mp4", text)
+            self.assertNotIn("v/highlights/", text)
 
     def test_report_marks_disabled(self):
-        from ja_video_subtitles.report import Reporter, VideoRecord
+        from ja_video_subtitles.report import VideoRecord
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            (d / "v.sub.mp4").write_bytes(b"x" * 2048)
-            rep = Reporter(d, version="0.1.1", asr_model="k", base_url="b",
-                           translate_model="m", bitrate="8M",
-                           highlights_config={"enabled": False})
+            video_dir = d / "v"
+            video_dir.mkdir()
+            (video_dir / "v.mp4").write_bytes(b"x" * 2048)
+            rep = self.make_reporter(d, enabled=False)
             rep.records.append(VideoRecord("v.mp4", "v"))
             text = rep.write().read_text(encoding="utf-8")
             self.assertIn("Highlights: disabled", text)

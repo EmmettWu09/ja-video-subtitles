@@ -122,9 +122,20 @@ class TestCliHelpers(unittest.TestCase):
     def test_confirm_overwrites_eof_defaults_to_skip(self):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            (d / "a.sub.mp4").touch()
+            (d / "a").mkdir()
+            (d / "a" / "a.mp4").touch()
             with mock.patch("builtins.input", side_effect=EOFError):
                 todo, skipped = confirm_overwrites([Path("a.mp4")], d, False)
+            self.assertEqual(todo, [])
+            self.assertEqual([v.name for v in skipped], ["a.mp4"])
+
+    def test_confirm_overwrites_burn_uses_flat_layout(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "a.sub.mp4").touch()
+            with mock.patch("builtins.input", side_effect=EOFError):
+                todo, skipped = confirm_overwrites([Path("a.mp4")], d, False,
+                                                   burn_only=True)
             self.assertEqual(todo, [])
             self.assertEqual([v.name for v in skipped], ["a.mp4"])
 
@@ -145,6 +156,22 @@ class TestMisc(unittest.TestCase):
         self.assertIn("\\:", escaped)
         self.assertIn("\\'", escaped)
 
+    def test_video_dir_preflight_creates_and_probes(self):
+        from ja_video_subtitles import preflight
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            self.assertEqual(preflight._check_video_dir(d / "v"), [])
+            self.assertTrue((d / "v").is_dir())
+
+    def test_video_dir_preflight_rejects_a_plain_file(self):
+        from ja_video_subtitles import preflight
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "v").write_bytes(b"plain file")
+            errors = preflight._check_video_dir(d / "v")
+            self.assertEqual(len(errors), 1)
+            self.assertIn(str(d / "v"), errors[0])
+
     def test_config_missing_raises(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(ConfigError):
@@ -164,9 +191,11 @@ class TestReporter(unittest.TestCase):
         from ja_video_subtitles.report import Reporter, StageRecord, VideoRecord
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
-            (d / "v.ja.srt").write_text(srt.compose(make_subs(3)),
-                                        encoding="utf-8")
-            (d / "v.sub.mp4").write_bytes(b"x" * 2048)
+            video_dir = d / "v"
+            video_dir.mkdir()
+            (video_dir / "v.ja.srt").write_text(srt.compose(make_subs(3)),
+                                                encoding="utf-8")
+            (video_dir / "v.mp4").write_bytes(b"x" * 2048)
             rep = Reporter(d, version="0.1.1", asr_model="kotoba",
                            translate_model="deepseek-v4-flash",
                            base_url="https://api.deepseek.com", bitrate="8M")
@@ -179,7 +208,8 @@ class TestReporter(unittest.TestCase):
             path = rep.write()
             text = path.read_text(encoding="utf-8")
             self.assertIn("1 succeeded / 1 failed / 0 skipped", text)
-            self.assertIn("v.ja.srt", text)
+            self.assertIn("v/v.ja.srt", text)
+            self.assertIn("v/v.mp4", text)
             self.assertIn("3 subtitles", text)
             self.assertIn("boom", text)
             self.assertNotIn("api_key", text)

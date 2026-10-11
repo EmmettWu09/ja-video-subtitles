@@ -169,12 +169,16 @@ def _replace_rendered(ffmpeg: Path, segments: list[Path], final: Path,
 
 def render_clips(video: Path, entries: list, bounds: list[dict], hdir: Path,
                  cfg, ffmpeg: Path, ffprobe: Path) -> list[dict]:
-    """Independent clips: ~3s Chinese title card + the complete event."""
+    """Independent clips: ~3s Chinese title card + the complete event.
+
+    Clip files are named <stem>.clip-NNN.mp4 so they stay attributable to
+    the source video outside their folder.
+    """
     info = _stream_info(ffprobe, video)
     work = hdir / "work"
     clips = []
     for number, bound in enumerate(bounds, 1):
-        name = f"clip-{number:03d}"
+        name = f"{video.stem}.clip-{number:03d}"
         card = work / f"{name}-card.mp4"
         _render_card(bound["title_zh"], timeline.CARD_NOMINAL_MS / 1000,
                      card, ffmpeg, cfg, info["width"], info["height"],
@@ -215,11 +219,14 @@ def render_clips(video: Path, entries: list, bounds: list[dict], hdir: Path,
 
 
 def render_essence(video: Path, entries: list, plan: dict, manifest: dict,
-                   hdir: Path, cfg, ffmpeg: Path, ffprobe: Path) -> dict:
+                   hdir: Path, essence_out: Path, cfg, ffmpeg: Path,
+                   ffprobe: Path) -> dict:
     """Render every segment from source material, measure, and concat.
 
-    Returns the final plan: out positions accumulate from measured segment
-    durations, and the exported SRT uses the same boundaries as the video.
+    The finished essence replaces ``essence_out`` (next to the burned video,
+    one level above ``hdir``) only on success. Returns the final plan: out
+    positions accumulate from measured segment durations, and the exported
+    SRT uses the same boundaries as the video.
     """
     info = _stream_info(ffprobe, video)
     work = hdir / "work"
@@ -273,13 +280,12 @@ def render_essence(video: Path, entries: list, plan: dict, manifest: dict,
               f"{duration_ms / 1000:.1f}s", flush=True)
     if not rendered:
         raise RuntimeError("essence plan has no segments to render")
-    final = hdir / "highlights.mp4"
-    _replace_rendered(ffmpeg, rendered, final, cfg)
+    _replace_rendered(ffmpeg, rendered, essence_out, cfg)
     plan["total_ms"] = cursor
     srt_text = timeline.compose_srt(cues)
     if not timeline.valid_srt(srt_text):
-        raise RuntimeError("generated an invalid highlights.srt")
-    (hdir / "subtitles" / "highlights.srt").write_text(srt_text,
-                                                       encoding="utf-8")
-    print(f"[highlights] essence -> {final} ({cursor / 1000:.0f}s)")
+        raise RuntimeError(f"generated an invalid {video.stem}.highlights.srt")
+    (hdir / "subtitles" / f"{video.stem}.highlights.srt").write_text(
+        srt_text, encoding="utf-8")
+    print(f"[highlights] essence -> {essence_out} ({cursor / 1000:.0f}s)")
     return plan

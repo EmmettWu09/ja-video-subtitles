@@ -337,9 +337,10 @@ class TestBurnCli(unittest.TestCase):
                               base_url="https://example.invalid", video_bitrate="8M")
         self.full_preflight.side_effect = None
         self.full_preflight.return_value = cfg, self.ffmpeg
-        target = self.out / "a.sub.mp4"
+        target = self.out / "a" / "a.mp4"
+        target.parent.mkdir(parents=True)
 
-        def process(video, output, config, ffmpeg, force, record):
+        def process(video, output, config, ffmpeg, force, record, **kwargs):
             target.write_bytes(b"processed")
             record.stages.append(cli.StageRecord("burn", "done"))
 
@@ -365,7 +366,8 @@ class TestBurnCli(unittest.TestCase):
                     prompt.assert_not_called()
                     run.assert_called_once()
                     self.assertEqual(run.call_args.args[:5],
-                                     (video, self.out, cfg, self.ffmpeg, expected_force))
+                                     (video, self.out / "a", cfg, self.ffmpeg,
+                                      expected_force))
                     self.assertEqual(run.call_args.args[5].name, video.name)
                     self.assertEqual(target.read_bytes(), b"processed")
                     self.assertIn("1 succeeded, 0 failed, 0 skipped", stdout)
